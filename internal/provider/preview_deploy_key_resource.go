@@ -65,7 +65,9 @@ func (r *previewDeployKeyResource) Schema(_ context.Context, _ resource.SchemaRe
 			"~> **The generated key is stored in Terraform state in plain text.** Convex returns the secret " +
 			"only once, at creation, so it cannot be read back. Treat the state file as a secret.\n\n" +
 			"Convex offers no endpoint for changing a preview deploy key, so every attribute forces " +
-			"replacement.",
+			"replacement.\n\n" +
+			"Convex has no get-by-id endpoint, so reads list the project's keys and match on `name`. Names " +
+			"must therefore be unique within the project.",
 		Attributes: map[string]schema.Attribute{
 			"project_id": schema.Int64Attribute{
 				Required: true,
@@ -145,7 +147,9 @@ func (r *previewDeployKeyResource) Configure(_ context.Context, req resource.Con
 	if req.ProviderData == nil {
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected resource configure type",
@@ -153,12 +157,14 @@ func (r *previewDeployKeyResource) Configure(_ context.Context, req resource.Con
 		)
 		return
 	}
+
 	r.client = client
 }
 
 func (r *previewDeployKeyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan previewDeployKeyResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -166,16 +172,19 @@ func (r *previewDeployKeyResource) Create(ctx context.Context, req resource.Crea
 	args := convex.PlatformCreatePreviewDeployKeyArgs{
 		Name: plan.Name.ValueString(),
 	}
+
 	if isSet(plan.ExpiresAt) {
 		args.ExpiresAt = plan.ExpiresAt.ValueInt64Pointer()
 	}
 
 	projectID := plan.ProjectID.ValueInt64()
 	created, err := r.client.CreatePreviewDeployKeyWithResponse(ctx, projectID, args)
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating Convex preview deploy key", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(created); err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex preview deploy key",
@@ -183,6 +192,7 @@ func (r *previewDeployKeyResource) Create(ctx context.Context, req resource.Crea
 		)
 		return
 	}
+
 	if created.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex preview deploy key",
@@ -201,15 +211,18 @@ func (r *previewDeployKeyResource) Create(ctx context.Context, req resource.Crea
 	// from here on, so a failure must still write state -- losing the secret
 	// would strand a key that cannot be recovered.
 	key, err := r.getPreviewDeployKey(ctx, projectID, args.Name)
+
 	if err != nil {
 		plan.ID = types.Int64Null()
 		plan.CreationTime = types.Int64Null()
 		plan.LastUsedTime = types.Int64Null()
 		plan.Creator = types.Int64Null()
 		plan.AllowedActions = types.SetNull(types.StringType)
+
 		if plan.ExpiresAt.IsUnknown() {
 			plan.ExpiresAt = types.Int64Null()
 		}
+
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		resp.Diagnostics.AddError(
 			"Error reading back created preview deploy key",
@@ -227,6 +240,7 @@ func (r *previewDeployKeyResource) Create(ctx context.Context, req resource.Crea
 func (r *previewDeployKeyResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state previewDeployKeyResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -235,14 +249,17 @@ func (r *previewDeployKeyResource) Read(ctx context.Context, req resource.ReadRe
 	name := state.Name.ValueString()
 
 	key, err := r.getPreviewDeployKey(ctx, projectID, name)
+
 	if err != nil {
 		var apiErr *convex.APIError
+
 		if errors.Is(err, errDeployKeyNotFound) || (errors.As(err, &apiErr) && apiErr.IsNotFound()) {
 			tflog.Debug(ctx, "Convex preview deploy key no longer exists, removing from state",
 				map[string]any{"name": name, "project_id": projectID})
 			resp.State.RemoveResource(ctx)
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error reading Convex preview deploy key",
 			fmt.Sprintf("Could not read preview deploy key %q in project %d: %s", name, projectID, err),
@@ -268,6 +285,7 @@ func (r *previewDeployKeyResource) Update(_ context.Context, _ resource.UpdateRe
 func (r *previewDeployKeyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state previewDeployKeyResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -277,15 +295,19 @@ func (r *previewDeployKeyResource) Delete(ctx context.Context, req resource.Dele
 
 	deleted, err := r.client.DeletePreviewDeployKeyWithResponse(ctx, projectID,
 		convex.PlatformDeletePreviewDeployKeyArgs{Id: name})
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting Convex preview deploy key", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(deleted); err != nil {
 		var apiErr *convex.APIError
+
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error deleting Convex preview deploy key",
 			fmt.Sprintf("Could not delete preview deploy key %q in project %d: %s", name, projectID, err),
@@ -295,6 +317,7 @@ func (r *previewDeployKeyResource) Delete(ctx context.Context, req resource.Dele
 
 func (r *previewDeployKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	rawProjectID, name, ok := strings.Cut(req.ID, "/")
+
 	if !ok || rawProjectID == "" || name == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -303,7 +326,9 @@ func (r *previewDeployKeyResource) ImportState(ctx context.Context, req resource
 		)
 		return
 	}
+
 	projectID, err := strconv.ParseInt(rawProjectID, 10, 64)
+
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -333,15 +358,19 @@ func (r *previewDeployKeyResource) getPreviewDeployKey(ctx context.Context, proj
 	includeManaged := true
 	listed, err := r.client.ListPreviewDeployKeysWithResponse(ctx, projectID,
 		&convex.ListPreviewDeployKeysParams{IncludeManaged: &includeManaged})
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(listed); err != nil {
 		return nil, err
 	}
+
 	if listed.JSON200 == nil {
 		return nil, errors.New("the API returned a successful status with no deploy key list")
 	}
+
 	return findDeployKeyByName(listed.JSON200.Items, name)
 }
 
@@ -349,6 +378,7 @@ func (r *previewDeployKeyResource) getPreviewDeployKey(ctx context.Context, proj
 // alone.
 func applyPreviewDeployKey(ctx context.Context, model *previewDeployKeyResourceModel, key *convex.PlatformDeployKeyResponse) diag.Diagnostics {
 	metadata, diags := readDeployKeyMetadata(ctx, key)
+
 	if diags.HasError() {
 		return diags
 	}

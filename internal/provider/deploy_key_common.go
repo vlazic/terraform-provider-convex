@@ -56,6 +56,7 @@ func findDeployKeyByName(keys []convex.PlatformDeployKeyResponse, name string) (
 			return &keys[i], nil
 		}
 	}
+
 	return nil, fmt.Errorf("%w: no key named %q", errDeployKeyNotFound, name)
 }
 
@@ -74,9 +75,11 @@ type deployKeyMetadata struct {
 // readDeployKeyMetadata converts a list entry into the shared attributes.
 func readDeployKeyMetadata(ctx context.Context, key *convex.PlatformDeployKeyResponse) (deployKeyMetadata, diag.Diagnostics) {
 	actions := make([]string, 0, len(key.AllowedActions))
+
 	for _, action := range key.AllowedActions {
 		actions = append(actions, string(action))
 	}
+
 	allowedActions, diags := types.SetValueFrom(ctx, types.StringType, actions)
 
 	return deployKeyMetadata{
@@ -98,13 +101,16 @@ func toCreateActions(ctx context.Context, set types.Set) (*[]convex.PlatformCrea
 
 	var actions []string
 	diags := set.ElementsAs(ctx, &actions, false)
+
 	if diags.HasError() {
 		return nil, diags
 	}
 
 	converted := make([]convex.PlatformCreateDeployKeyArgsAllowedActions, 0, len(actions))
+
 	for _, action := range actions {
 		converted = append(converted, convex.PlatformCreateDeployKeyArgsAllowedActions(action))
 	}
+
 	return &converted, diags
 }

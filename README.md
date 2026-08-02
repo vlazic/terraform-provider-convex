@@ -6,21 +6,22 @@ and the [Convex Management API](https://docs.convex.dev/management-api).
 
 ## Status
 
-Early. Two resources and two data sources are implemented:
+Early, and not yet published to the registry. Six resources and two data
+sources are implemented, all with import support.
 
-| Resource                    | Create | Read | Update           | Delete | Import                        |
-| --------------------------- | ------ | ---- | ---------------- | ------ | ----------------------------- |
-| `convex_project`            | yes    | yes  | yes              | yes    | by numeric ID                 |
-| `convex_deployment`         | yes    | yes  | yes              | yes    | by name                       |
-| `convex_deploy_key`         | yes    | yes  | no, replace only | yes    | `<deployment_name>/<key_name>` |
-| `convex_preview_deploy_key` | yes    | yes  | no, replace only | yes    | `<project_id>/<key_name>`      |
-| `convex_custom_domain`      | yes    | yes  | no, replace only | yes    | `<deployment_name>/<request_destination>/<domain>` |
-| `convex_default_environment_variable` | yes | yes | value only     | yes    | `<project_id>/<deployment_type>/<name>` |
+| Resource                              | Update           |
+| ------------------------------------- | ---------------- |
+| `convex_project`                      | yes              |
+| `convex_deployment`                   | yes              |
+| `convex_deploy_key`                   | no, replace only |
+| `convex_preview_deploy_key`           | no, replace only |
+| `convex_custom_domain`                | no, replace only |
+| `convex_default_environment_variable` | value only       |
 
-| Data source         | Lookup keys                                            |
-| ------------------- | ------------------------------------------------------ |
-| `convex_project`    | `id`, or `slug` + (`team_id` \| `team_slug`)            |
-| `convex_deployment` | `name`, or `project_id` + one selector                  |
+| Data source         | Lookup keys                                  |
+| ------------------- | -------------------------------------------- |
+| `convex_project`    | `id`, or `slug` + (`team_id` \| `team_slug`) |
+| `convex_deployment` | `name`, or `project_id` + one selector       |
 
 ## Usage
 
@@ -28,7 +29,8 @@ Early. Two resources and two data sources are implemented:
 terraform {
   required_providers {
     convex = {
-      source = "srs/convex"
+      source  = "srs/convex"
+      version = "0.1.0"
     }
   }
 }
@@ -50,8 +52,6 @@ resource "convex_deployment" "prod" {
 }
 ```
 
-More in [`examples/`](examples/).
-
 ### Authentication
 
 The provider authenticates with a bearer token, which may be a team access
@@ -59,162 +59,104 @@ token, a personal access token, or an OAuth token. Team access tokens are
 created in the Convex dashboard under team settings, which is also where you
 find the numeric team ID that `convex_project.team_id` expects.
 
-| Attribute  | Environment variable   | Default                     |
-| ---------- | ---------------------- | --------------------------- |
-| `token`    | `CONVEX_ACCESS_TOKEN`  | none, required              |
-| `endpoint` | `CONVEX_ENDPOINT`      | `https://api.convex.dev/v1` |
+| Attribute  | Environment variable  | Default                     |
+| ---------- | --------------------- | --------------------------- |
+| `token`    | `CONVEX_ACCESS_TOKEN` | none, required              |
+| `endpoint` | `CONVEX_ENDPOINT`     | `https://api.convex.dev/v1` |
 
-### Notes on `convex_project`
+## Documentation
 
-- `team_id` forces replacement. Convex has no API for moving a project between
-  teams.
-- `slug` is generated from `name` by Convex. Setting it explicitly on a new
-  project costs a second API call, because the create endpoint has no slug
-  parameter and the rename has to follow.
-- Creating a project does not create a deployment. Declare a
-  `convex_deployment` for that.
-- Import takes the numeric project ID: `terraform import convex_project.app 12345`.
+Per-resource reference lives in [`docs/`](docs/), generated from the provider
+schemas — that is also what the Terraform Registry renders. Runnable
+configuration is in [`examples/`](examples/).
 
-### Notes on `convex_deployment`
+Each resource's page documents its own constraints. A few are worth knowing up
+front:
 
-- Manages cloud deployments. Local deployments — backends the Convex CLI
-  registers for a developer's machine — are rejected with a clear error rather
-  than half-decoded, since they share almost no fields with cloud ones.
-- Import takes the deployment **name**, not a numeric ID:
-  `terraform import convex_deployment.prod playful-otter-123`. The name is what
-  the API addresses deployments by.
-- `region` forces replacement, but only when you set it explicitly — a
-  server-assigned default region does not.
-- `deployment_type`, `class`, `reference` and `is_default` are all updatable in
-  place. Changing the type of a default deployment requires setting
-  `is_default` in the same apply.
-- `reference` is validated at plan time against the rules the API documents.
-  Watch out for one non-obvious rule: a reference must not have the shape of a
-  deployment name (word-word-number), so a natural-looking `prod-eu-2` is
-  rejected while `prod-eu-west-2` is fine.
-- `expires_at`, `send_logs_to_client` and `dashboard_edit_confirmation` are
-  tri-state in the API, where null means "use the deployment-type default".
-  They are modelled as optional+computed, so setting and changing them works,
-  but **removing one from configuration keeps the last applied value** rather
-  than resetting it to the default. Set it explicitly to the default instead.
-- `last_deploy_time` changes whenever code is pushed, entirely outside
-  Terraform, so it is refreshed on every read and never used to plan changes.
-
-### Notes on the deploy key resources
-
-**The generated secret is written to Terraform state in plain text.** Convex
-returns a deploy key's value exactly once, in the create response, and no
-endpoint can fetch it again. A provider cannot avoid persisting it, so treat
-the state file as a secret: use a remote backend with encryption at rest and
-restricted access. This applies to both `convex_deploy_key` and
-`convex_preview_deploy_key`.
-
-- **Nothing is updatable.** Convex has no endpoint for modifying a deploy key,
-  so every configurable attribute forces replacement. Replacing means the new
-  key is created and the old one destroyed — anything still holding the old
-  value breaks at that moment. Plan key rotation accordingly.
-- **Reads go through the list endpoint.** There is no get-by-id for deploy
-  keys, so the provider lists the deployment's or project's keys and matches on
-  `name`. Names must therefore be unique within their scope, which the API
-  already assumes — its delete endpoint accepts a name as an identifier.
-- **Importing cannot recover the secret.** An imported key has `key` set to
-  null, and the import emits a warning saying so. Everything else refreshes
-  normally. To get a usable secret you have to replace the key.
-- `allowed_actions` is optional on `convex_deploy_key`. Leaving it out accepts
-  whatever Convex grants by default, which is broader than most CI jobs need —
-  `["deployment:deploy"]` is usually the right scope for a deploy pipeline.
-  Preview deploy keys have no equivalent setting, so there the attribute is
-  read-only.
-- `last_used_time` changes whenever the key is used, entirely outside
-  Terraform.
-
-### Notes on `convex_custom_domain`
-
-- **Verification is asynchronous and Terraform does not wait for it.** Creating
-  the resource registers the domain and returns immediately; Convex verifies it
-  once the DNS records resolve. So `verified` is normally `false` right after
-  the first apply and flips to `true` on a later refresh. Point your DNS at the
-  deployment separately — this resource does not manage DNS records.
-- `request_destination` is part of the identity, not a detail. `convexCloud`
-  fronts the deployment's `.convex.cloud` API URL and `convexSite` fronts its
-  `.convex.site` HTTP actions URL, and the same domain can be registered for
-  both. It is required rather than defaulted, because silently picking the
-  wrong one would be hard to notice.
-- Nothing is updatable, so every attribute forces replacement. Reads go through
-  the list endpoint and match on domain + destination, since there is no
-  get-by-id.
-- `verified` is a convenience for `verification_time != null`; both are
-  exposed.
-- Note that `convex_deployment.deployment_url` always reports the
-  `.convex.cloud` URL, even once a custom domain is in place.
-
-### Notes on `convex_default_environment_variable`
-
-- **Defaults apply only to deployments created afterwards.** Convex uses these
-  values when a new deployment is created; it does not push them to existing
-  deployments and does not keep them in sync. Editing one here has no effect on
-  a running deployment. Declare the variables before the `convex_deployment`
-  that should pick them up — the example uses `depends_on` for exactly that.
-- One resource manages one `(name, deployment_type)` pair, which is how the API
-  keys these variables: writes are `{name, deploymentType, value}` upserts.
-  Spanning several types is a `for_each` over the types.
-- Variables Terraform does not declare are left alone. That is the usual
-  granular-resource tradeoff: composable, but a variable someone adds in the
-  dashboard is invisible to Terraform rather than being flagged as drift.
-- **Creating fails if the variable already exists.** The API only upserts, so
-  it cannot distinguish create from update. Without the check, an apply would
-  silently overwrite a value set elsewhere and then delete it on the next
-  destroy. The error tells you the import command to run instead.
-- `value` is marked sensitive because these commonly hold credentials. It is
-  stored in Terraform state in plain text regardless.
-- The read filters server-side on both name and deployment type, so it never
-  has to page through the full list.
-
-### Notes on the data sources
-
-- `data.convex_project` takes either `id`, or `slug` plus one of `team_id` /
-  `team_slug`. A slug is only unique within a team, so it cannot stand alone.
-- `data.convex_deployment` takes either `name`, or `project_id` plus exactly
-  one selector: `reference`, `default_prod` or `default_dev`. A project
-  normally holds several deployments, so the selector is required rather than
-  defaulted — guessing would be worse than asking.
-- There is no team+slug lookup for deployments. Resolve the project with
-  `data.convex_project` and feed its `id` to `data.convex_deployment`, which
-  composes to the same thing without a second lookup path to maintain.
-- `default_dev` resolves against the calling member, so which deployment it
-  returns depends on the token in use. Prefer `reference` when you need a
-  stable answer across machines and CI.
+- **Deploy key secrets are stored in Terraform state in plain text.** Convex
+  returns them only once, at creation, so no provider can avoid it and import
+  cannot recover them. Treat state as a secret.
+- **Default environment variables apply only to deployments created
+  afterwards.** Convex does not sync them to existing deployments.
+- **Custom domain verification is asynchronous.** `verified` stays `false`
+  until a later refresh picks up the DNS check, and this resource does not
+  manage DNS records.
+- **Several attributes are tri-state** (`expires_at`, `send_logs_to_client`,
+  `dashboard_edit_confirmation`), where null means "use the default". Removing
+  one from configuration keeps the last applied value; set it explicitly.
 
 ## Development
 
-The API client in `internal/convex/client.gen.go` is generated from the
-vendored OpenAPI document at `api/openapi.json`.
-
 ```bash
 make fetch-spec   # refresh api/openapi.json from https://api.convex.dev/v1/openapi.json
-make generate     # normalize the spec, then regenerate the client
+make generate     # normalize the spec, then regenerate the API client
+make docs         # regenerate docs/ from the provider schemas
 make test         # unit tests
+make smoke        # offline end-to-end plan through real Terraform
+make check        # lint + test + smoke, i.e. what CI runs
 make build        # build the provider binary
+make install      # install into the local plugin mirror
 ```
 
-Both generated artifacts (`api/openapi.normalized.json` and
-`internal/convex/client.gen.go`) are committed, so a checkout builds without
-running codegen.
+Generated artifacts (`api/openapi.normalized.json`,
+`internal/convex/client.gen.go` and `docs/`) are committed, so a checkout
+builds without running codegen. CI fails if they are stale.
+
+### The smoke test
+
+`make smoke` builds the provider, points Terraform at the binary with a
+`dev_overrides` block, and plans [`test/smoke`](test/smoke) against it. That
+runs the actual plugin protocol, so schemas, plan modifiers, validators and
+attribute sensitivity are exercised the way Terraform exercises them — which
+the Go unit tests cannot do on their own.
+
+It needs no credentials and no network, and applies nothing: every resource in
+the config is new and both data sources depend on one, so Terraform defers the
+reads to apply. It plans a *copy* of the directory, so state left behind by a
+stray apply cannot turn the check into a live refresh.
+
+The script asserts against the plan JSON that every registered resource and
+data source appears, deriving the expected list from `provider.go` itself, so
+adding a resource without adding it to the smoke config fails the build. It
+also checks that deploy key secrets are marked sensitive.
+
+If `terraform` is not installed the script exits 0 with a message, so it does
+not break a Go-only checkout.
 
 ### Why the spec is normalized before codegen
 
-Thirteen path parameters in the upstream document declare neither `schema` nor
-`content`, which is invalid OpenAPI and makes `oapi-codegen` fail outright.
-`internal/tools/normalizespec` backfills each one from a well-formed occurrence
-of the same parameter elsewhere in the document, refusing to guess if those
-occurrences disagree. The vendored `api/openapi.json` stays byte-identical to
-upstream so that refreshing it is a clean overwrite.
+Thirteen path parameters in the upstream OpenAPI document declare neither
+`schema` nor `content`, which is invalid and makes `oapi-codegen` fail
+outright. `internal/tools/normalizespec` backfills each one from a well-formed
+occurrence of the same parameter elsewhere in the document, refusing to guess
+if those occurrences disagree. The vendored `api/openapi.json` stays
+byte-identical to upstream, so refreshing it is a clean overwrite.
 
-The generated per-operation response wrappers also carry an `HTTPResponse`
-suffix, because several schema components in the spec are themselves named
+Generated per-operation response wrappers carry an `HTTPResponse` suffix,
+because several schema components in the spec are themselves named
 `<Something>Response` and would otherwise collide.
 
 ### Running against a local build
+
+The source address is `srs/convex`, which the registry maps to
+`github.com/srs/terraform-provider-convex`. Until a release is published it
+resolves only to a local build, via one of two mechanisms.
+
+**Local plugin mirror.** `make install` copies the binary into Terraform's
+implied local mirror. Nothing else is needed — no CLI configuration, no flags —
+and `terraform init` resolves it offline and writes a real lock file, so the
+workflow matches a published provider.
+
+Two things bite during development. The mirror holds a *copy*, so `make build`
+is not enough: you must `make install`, or Terraform silently keeps running the
+previous binary. And reinstalling invalidates `.terraform.lock.hcl`, which
+records a checksum of a binary that changed while the version stayed put — the
+next `terraform init` then fails on the checksum, and the fix is to delete the
+lock and re-init. The sandbox Makefile does both automatically.
+
+**`dev_overrides`.** Points the address straight at a build directory: no copy,
+no lock, and `terraform init` is neither needed nor supported. Easier for a
+tight edit-and-plan loop, and what the smoke test uses.
 
 ```hcl
 # ~/.terraformrc
@@ -226,5 +168,47 @@ provider_installation {
 }
 ```
 
-With a dev override in place, run `terraform plan` / `terraform apply`
-directly; `terraform init` is neither needed nor supported.
+Note that a provider `source` is always `[host/]namespace/type` — unlike module
+sources it can never be a filesystem path. Both mechanisms work by mapping that
+address to a local directory.
+
+### Sandbox
+
+`../convex-tf-sandbox` is a scratch config covering the whole surface. Unlike
+the smoke test it talks to the real API and creates real, possibly billable
+resources, so it needs a token and a team ID.
+
+```bash
+cd ../convex-tf-sandbox
+cp terraform.tfvars.example terraform.tfvars   # then fill it in
+export CONVEX_ACCESS_TOKEN=...
+make plan       # runs make install, then terraform init + plan
+```
+
+`make destroy` cleans up.
+
+### Publishing
+
+Everything in the repo is release-ready; what remains needs your credentials.
+
+1. **Create a GPG signing key** and add the *public* key to your registry
+   namespace at registry.terraform.io. The registry verifies that the checksums
+   file in each release is signed by it.
+2. **Add repository secrets** in GitHub: `GPG_PRIVATE_KEY` (ASCII-armored) and
+   `PASSPHRASE`.
+3. **Publish the provider** on registry.terraform.io — sign in with GitHub,
+   authorize the account, select this repository.
+4. **Tag a release:** `git tag v0.1.0 && git push origin v0.1.0`. The
+   [release workflow](.github/workflows/release.yml) builds every platform with
+   GoReleaser, signs the checksums and creates the GitHub release; the registry
+   picks it up from the tag.
+
+There is no acceptance test suite yet, so resource behaviour is covered by unit
+tests and an offline plan rather than against a live API. Worth adding before
+tagging.
+
+## License
+
+Copyright 2026 Sten Roger Sandvik <stenrs@gmail.com>.
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

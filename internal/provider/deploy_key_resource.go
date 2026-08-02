@@ -67,7 +67,9 @@ func (r *deployKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"rest.\n\n" +
 			"Convex offers no endpoint for changing a deploy key, so every attribute forces replacement. " +
 			"Replacing a key creates the new one and destroys the old one, which will break anything still " +
-			"using the old value.",
+			"using the old value.\n\n" +
+			"Convex has no get-by-id endpoint for deploy keys, so reads list the deployment's keys and match " +
+			"on `name`. Names must therefore be unique within the deployment.",
 		Attributes: map[string]schema.Attribute{
 			"deployment_name": schema.StringAttribute{
 				Required: true,
@@ -157,7 +159,9 @@ func (r *deployKeyResource) Configure(_ context.Context, req resource.ConfigureR
 	if req.ProviderData == nil {
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected resource configure type",
@@ -165,18 +169,21 @@ func (r *deployKeyResource) Configure(_ context.Context, req resource.ConfigureR
 		)
 		return
 	}
+
 	r.client = client
 }
 
 func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan deployKeyResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	allowedActions, diags := toCreateActions(ctx, plan.AllowedActions)
 	resp.Diagnostics.Append(diags...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -185,16 +192,19 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 		Name:           plan.Name.ValueString(),
 		AllowedActions: allowedActions,
 	}
+
 	if isSet(plan.ExpiresAt) {
 		args.ExpiresAt = plan.ExpiresAt.ValueInt64Pointer()
 	}
 
 	deploymentName := plan.DeploymentName.ValueString()
 	created, err := r.client.CreateDeployKeyWithResponse(ctx, deploymentName, args)
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating Convex deploy key", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(created); err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex deploy key",
@@ -203,6 +213,7 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 		)
 		return
 	}
+
 	if created.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex deploy key",
@@ -222,17 +233,21 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 	// failure must still write state -- losing the secret would mean a key that
 	// can never be recovered or cleanly destroyed.
 	key, err := r.getDeployKey(ctx, deploymentName, args.Name)
+
 	if err != nil {
 		plan.ID = types.Int64Null()
 		plan.CreationTime = types.Int64Null()
 		plan.LastUsedTime = types.Int64Null()
 		plan.Creator = types.Int64Null()
+
 		if plan.AllowedActions.IsUnknown() {
 			plan.AllowedActions = types.SetNull(types.StringType)
 		}
+
 		if plan.ExpiresAt.IsUnknown() {
 			plan.ExpiresAt = types.Int64Null()
 		}
+
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		resp.Diagnostics.AddError(
 			"Error reading back created deploy key",
@@ -250,6 +265,7 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 func (r *deployKeyResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state deployKeyResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -258,14 +274,17 @@ func (r *deployKeyResource) Read(ctx context.Context, req resource.ReadRequest, 
 	name := state.Name.ValueString()
 
 	key, err := r.getDeployKey(ctx, deploymentName, name)
+
 	if err != nil {
 		var apiErr *convex.APIError
+
 		if errors.Is(err, errDeployKeyNotFound) || (errors.As(err, &apiErr) && apiErr.IsNotFound()) {
 			tflog.Debug(ctx, "Convex deploy key no longer exists, removing from state",
 				map[string]any{"name": name, "deployment": deploymentName})
 			resp.State.RemoveResource(ctx)
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error reading Convex deploy key",
 			fmt.Sprintf("Could not read deploy key %q on deployment %q: %s", name, deploymentName, err),
@@ -293,6 +312,7 @@ func (r *deployKeyResource) Update(_ context.Context, _ resource.UpdateRequest, 
 func (r *deployKeyResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state deployKeyResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -304,16 +324,20 @@ func (r *deployKeyResource) Delete(ctx context.Context, req resource.DeleteReque
 	// always available, including on imported keys.
 	deleted, err := r.client.DeleteDeployKeyWithResponse(ctx, deploymentName,
 		convex.PlatformDeleteDeployKeyArgs{Id: name})
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting Convex deploy key", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(deleted); err != nil {
 		var apiErr *convex.APIError
+
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			// Already gone, which is the desired end state.
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error deleting Convex deploy key",
 			fmt.Sprintf("Could not delete deploy key %q on deployment %q: %s", name, deploymentName, err),
@@ -323,6 +347,7 @@ func (r *deployKeyResource) Delete(ctx context.Context, req resource.DeleteReque
 
 func (r *deployKeyResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	deploymentName, name, ok := strings.Cut(req.ID, "/")
+
 	if !ok || deploymentName == "" || name == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -350,21 +375,26 @@ func (r *deployKeyResource) ImportState(ctx context.Context, req resource.Import
 // deploy keys, so this lists and filters.
 func (r *deployKeyResource) getDeployKey(ctx context.Context, deploymentName, name string) (*convex.PlatformDeployKeyResponse, error) {
 	listed, err := r.client.ListDeployKeysWithResponse(ctx, deploymentName)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(listed); err != nil {
 		return nil, err
 	}
+
 	if listed.JSON200 == nil {
 		return nil, errors.New("the API returned a successful status with no deploy key list")
 	}
+
 	return findDeployKeyByName(*listed.JSON200, name)
 }
 
 // applyDeployKey copies list metadata onto the model, leaving the secret alone.
 func applyDeployKey(ctx context.Context, model *deployKeyResourceModel, key *convex.PlatformDeployKeyResponse) diag.Diagnostics {
 	metadata, diags := readDeployKeyMetadata(ctx, key)
+
 	if diags.HasError() {
 		return diags
 	}

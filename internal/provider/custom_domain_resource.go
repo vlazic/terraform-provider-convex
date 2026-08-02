@@ -124,7 +124,9 @@ func (r *customDomainResource) Configure(_ context.Context, req resource.Configu
 	if req.ProviderData == nil {
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected resource configure type",
@@ -132,12 +134,14 @@ func (r *customDomainResource) Configure(_ context.Context, req resource.Configu
 		)
 		return
 	}
+
 	r.client = client
 }
 
 func (r *customDomainResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan customDomainResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -150,10 +154,12 @@ func (r *customDomainResource) Create(ctx context.Context, req resource.CreateRe
 	// the delete-flavoured type name on a create call.
 	created, err := r.client.CreateCustomDomainWithResponse(ctx, deploymentName,
 		convex.PlatformDeleteCustomDomainArgs{Domain: domain, RequestDestination: destination})
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating Convex custom domain", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(created); err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex custom domain",
@@ -161,6 +167,7 @@ func (r *customDomainResource) Create(ctx context.Context, req resource.CreateRe
 		)
 		return
 	}
+
 	tflog.Debug(ctx, "created Convex custom domain", map[string]any{
 		"domain": domain, "destination": string(destination), "deployment": deploymentName,
 	})
@@ -169,6 +176,7 @@ func (r *customDomainResource) Create(ctx context.Context, req resource.CreateRe
 	// follow-up list. The domain exists from here on, so a failure still has to
 	// write state or Terraform will lose track of it.
 	found, err := r.getCustomDomain(ctx, deploymentName, domain, destination)
+
 	if err != nil {
 		plan.CreationTime = types.Int64Null()
 		plan.VerificationTime = types.Int64Null()
@@ -190,6 +198,7 @@ func (r *customDomainResource) Create(ctx context.Context, req resource.CreateRe
 func (r *customDomainResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state customDomainResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -199,14 +208,17 @@ func (r *customDomainResource) Read(ctx context.Context, req resource.ReadReques
 	destination := convex.RequestDestination(state.RequestDestination.ValueString())
 
 	found, err := r.getCustomDomain(ctx, deploymentName, domain, destination)
+
 	if err != nil {
 		var apiErr *convex.APIError
+
 		if errors.Is(err, errCustomDomainNotFound) || (errors.As(err, &apiErr) && apiErr.IsNotFound()) {
 			tflog.Debug(ctx, "Convex custom domain no longer exists, removing from state",
 				map[string]any{"domain": domain, "deployment": deploymentName})
 			resp.State.RemoveResource(ctx)
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error reading Convex custom domain",
 			fmt.Sprintf("Could not read %q on deployment %q: %s", domain, deploymentName, err),
@@ -231,6 +243,7 @@ func (r *customDomainResource) Update(_ context.Context, _ resource.UpdateReques
 func (r *customDomainResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state customDomainResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -241,16 +254,20 @@ func (r *customDomainResource) Delete(ctx context.Context, req resource.DeleteRe
 
 	deleted, err := r.client.DeleteCustomDomainWithResponse(ctx, deploymentName,
 		convex.PlatformDeleteCustomDomainArgs{Domain: domain, RequestDestination: destination})
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting Convex custom domain", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(deleted); err != nil {
 		var apiErr *convex.APIError
+
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			// Already gone, which is the desired end state.
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error deleting Convex custom domain",
 			fmt.Sprintf("Could not remove %q from deployment %q: %s", domain, deploymentName, err),
@@ -260,6 +277,7 @@ func (r *customDomainResource) Delete(ctx context.Context, req resource.DeleteRe
 
 func (r *customDomainResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	parts := strings.Split(req.ID, "/")
+
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -268,6 +286,7 @@ func (r *customDomainResource) ImportState(ctx context.Context, req resource.Imp
 		)
 		return
 	}
+
 	deploymentName, destination, domain := parts[0], parts[1], parts[2]
 
 	if destination != string(convex.ConvexCloud) && destination != string(convex.ConvexSite) {
@@ -288,15 +307,19 @@ func (r *customDomainResource) ImportState(ctx context.Context, req resource.Imp
 // get-by-id endpoint, so this lists and filters.
 func (r *customDomainResource) getCustomDomain(ctx context.Context, deploymentName, domain string, destination convex.RequestDestination) (*convex.PlatformCustomDomainResponse, error) {
 	listed, err := r.client.ListCustomDomainsWithResponse(ctx, deploymentName)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(listed); err != nil {
 		return nil, err
 	}
+
 	if listed.JSON200 == nil {
 		return nil, errors.New("the API returned a successful status with no custom domain list")
 	}
+
 	return findCustomDomain(listed.JSON200.Domains, domain, destination)
 }
 
@@ -309,6 +332,7 @@ func findCustomDomain(domains []convex.PlatformCustomDomainResponse, domain stri
 			return &domains[i], nil
 		}
 	}
+
 	return nil, fmt.Errorf("%w: %q is not configured for %s", errCustomDomainNotFound, domain, destination)
 }
 

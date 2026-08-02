@@ -44,6 +44,7 @@ func (v deploymentReferenceValidator) ValidateString(ctx context.Context, req va
 	if req.ConfigValue.IsNull() || req.ConfigValue.IsUnknown() {
 		return
 	}
+
 	value := req.ConfigValue.ValueString()
 
 	addError := func(detail string) {

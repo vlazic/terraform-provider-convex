@@ -119,7 +119,9 @@ func (d *projectDataSource) Configure(_ context.Context, req datasource.Configur
 	if req.ProviderData == nil {
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected data source configure type",
@@ -127,12 +129,14 @@ func (d *projectDataSource) Configure(_ context.Context, req datasource.Configur
 		)
 		return
 	}
+
 	d.client = client
 }
 
 func (d *projectDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var config projectDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -175,28 +179,36 @@ func (d *projectDataSource) Read(ctx context.Context, req datasource.ReadRequest
 
 func (d *projectDataSource) getByID(ctx context.Context, projectID int64) (*convex.ProjectResponse, error) {
 	got, err := d.client.GetProjectByIdWithResponse(ctx, projectID)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(got); err != nil {
 		return nil, fmt.Errorf("could not read project %d: %w", projectID, err)
 	}
+
 	if got.JSON200 == nil {
 		return nil, fmt.Errorf("the API returned a successful status with no body for project %d", projectID)
 	}
+
 	return got.JSON200, nil
 }
 
 func (d *projectDataSource) getBySlug(ctx context.Context, teamIDOrSlug, projectSlug string) (*convex.ProjectResponse, error) {
 	got, err := d.client.GetProjectBySlugWithResponse(ctx, teamIDOrSlug, projectSlug)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(got); err != nil {
 		return nil, fmt.Errorf("could not read project %q in team %q: %w", projectSlug, teamIDOrSlug, err)
 	}
+
 	if got.JSON200 == nil {
 		return nil, fmt.Errorf("the API returned a successful status with no body for project %q", projectSlug)
 	}
+
 	return got.JSON200, nil
 }

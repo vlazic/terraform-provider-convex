@@ -23,6 +23,7 @@ func main() {
 		Address: "registry.terraform.io/srs/convex",
 		Debug:   debug,
 	})
+
 	if err != nil {
 		log.Fatal(err.Error())
 	}

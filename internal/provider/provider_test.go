@@ -15,6 +15,7 @@ func TestProviderSchema(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Schema() diagnostics: %+v", resp.Diagnostics)
 	}
+
 	if diags := resp.Schema.ValidateImplementation(ctx); diags.HasError() {
 		t.Fatalf("ValidateImplementation() diagnostics: %+v", diags)
 	}
@@ -27,6 +28,7 @@ func TestProviderMetadata(t *testing.T) {
 	if resp.TypeName != "convex" {
 		t.Errorf("TypeName = %q, want %q", resp.TypeName, "convex")
 	}
+
 	if resp.Version != "1.2.3" {
 		t.Errorf("Version = %q, want %q", resp.Version, "1.2.3")
 	}
@@ -36,12 +38,15 @@ func TestProviderResources(t *testing.T) {
 	ctx := t.Context()
 
 	got := map[string]bool{}
+
 	for _, newResource := range New("test")().Resources(ctx) {
 		metadata := &fwresource.MetadataResponse{}
 		newResource().Metadata(ctx, fwresource.MetadataRequest{ProviderTypeName: "convex"}, metadata)
+
 		if got[metadata.TypeName] {
 			t.Errorf("resource %q is registered more than once", metadata.TypeName)
 		}
+
 		got[metadata.TypeName] = true
 	}
 
@@ -53,6 +58,7 @@ func TestProviderResources(t *testing.T) {
 		"convex_custom_domain",
 		"convex_default_environment_variable",
 	}
+
 	for _, name := range want {
 		if !got[name] {
 			t.Errorf("resource %q is not registered", name)
@@ -72,9 +78,11 @@ func TestProviderResourceSchemas(t *testing.T) {
 		t.Run(metadata.TypeName, func(t *testing.T) {
 			resp := &fwresource.SchemaResponse{}
 			res.Schema(ctx, fwresource.SchemaRequest{}, resp)
+
 			if resp.Diagnostics.HasError() {
 				t.Fatalf("Schema() diagnostics: %+v", resp.Diagnostics)
 			}
+
 			if diags := resp.Schema.ValidateImplementation(ctx); diags.HasError() {
 				t.Fatalf("ValidateImplementation() diagnostics: %+v", diags)
 			}

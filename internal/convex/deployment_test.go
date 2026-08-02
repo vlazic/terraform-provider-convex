@@ -9,9 +9,11 @@ import (
 func mustDeploymentResponse(t *testing.T, body string) *PlatformDeploymentResponse {
 	t.Helper()
 	var resp PlatformDeploymentResponse
+
 	if err := json.Unmarshal([]byte(body), &resp); err != nil {
 		t.Fatalf("unmarshalling fixture: %v", err)
 	}
+
 	return &resp
 }
 
@@ -31,18 +33,23 @@ func TestAsCloudDeployment(t *testing.T) {
 	}`)
 
 	deployment, err := AsCloudDeployment(resp)
+
 	if err != nil {
 		t.Fatalf("AsCloudDeployment() error = %v", err)
 	}
+
 	if deployment.Id != 99 {
 		t.Errorf("Id = %d, want 99", deployment.Id)
 	}
+
 	if deployment.Name != "playful-otter-123" {
 		t.Errorf("Name = %q, want playful-otter-123", deployment.Name)
 	}
+
 	if deployment.Region != AwsEuWest1 {
 		t.Errorf("Region = %q, want %q", deployment.Region, AwsEuWest1)
 	}
+
 	if !deployment.IsDefault {
 		t.Error("IsDefault = false, want true")
 	}
@@ -65,9 +72,11 @@ func TestAsCloudDeploymentRejectsLocal(t *testing.T) {
 	}`)
 
 	deployment, err := AsCloudDeployment(resp)
+
 	if err == nil {
 		t.Fatalf("AsCloudDeployment() = %+v, want error", deployment)
 	}
+
 	if !errors.Is(err, ErrNotCloudDeployment) {
 		t.Errorf("error = %v, want it to wrap ErrNotCloudDeployment", err)
 	}

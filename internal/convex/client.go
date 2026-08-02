@@ -19,6 +19,7 @@ func NewAuthenticated(baseURL, token string, opts ...ClientOption) (*ClientWithR
 	if baseURL == "" {
 		baseURL = DefaultBaseURL
 	}
+
 	// Put the auth editor first so callers can still override the header.
 	opts = append([]ClientOption{WithRequestEditorFn(bearerAuth(token))}, opts...)
 	return NewClientWithResponses(baseURL, opts...)
@@ -71,6 +72,7 @@ type apiResponse interface {
 // for anything in the 2xx range.
 func CheckResponse(resp apiResponse) error {
 	status := resp.StatusCode()
+
 	if status >= 200 && status < 300 {
 		return nil
 	}
@@ -84,10 +86,12 @@ func CheckResponse(resp apiResponse) error {
 		Code    string `json:"code"`
 		Message string `json:"message"`
 	}
+
 	if err := json.Unmarshal(body, &parsed); err == nil {
 		apiErr.Code = parsed.Code
 		apiErr.Message = parsed.Message
 	}
+
 	return apiErr
 }
 
@@ -95,5 +99,6 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
+
 	return s[:max] + "..."
 }

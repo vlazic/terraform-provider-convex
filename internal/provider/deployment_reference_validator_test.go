@@ -58,6 +58,7 @@ func TestDeploymentReferenceValidator(t *testing.T) {
 
 func TestDeploymentReferenceValidatorLength(t *testing.T) {
 	long := make([]byte, referenceMaxLength+1)
+
 	for i := range long {
 		long[i] = 'a'
 	}
@@ -71,6 +72,7 @@ func TestDeploymentReferenceValidatorLength(t *testing.T) {
 		},
 		resp,
 	)
+
 	if !resp.Diagnostics.HasError() {
 		t.Errorf("a %d character reference was accepted, want an error", len(long))
 	}

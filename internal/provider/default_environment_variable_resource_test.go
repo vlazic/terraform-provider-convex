@@ -35,9 +35,11 @@ func TestFindEnvVarMatchesDeploymentType(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(string(tt.deploymentType), func(t *testing.T) {
 			found, err := findEnvVar(items, "SENTRY_DSN", tt.deploymentType)
+
 			if err != nil {
 				t.Fatalf("findEnvVar() error = %v", err)
 			}
+
 			if found.Value != tt.wantValue {
 				t.Errorf("value = %q, want %q", found.Value, tt.wantValue)
 			}
@@ -58,9 +60,11 @@ func TestFindEnvVarNotFound(t *testing.T) {
 	if _, err := findEnvVar(items, "SENTRY_DSN", convex.DeploymentTypeProd); !errors.Is(err, errEnvVarNotFound) {
 		t.Errorf("error = %v, want it to wrap errEnvVarNotFound", err)
 	}
+
 	if _, err := findEnvVar(items, "OTHER", convex.DeploymentTypeDev); !errors.Is(err, errEnvVarNotFound) {
 		t.Errorf("error = %v, want it to wrap errEnvVarNotFound", err)
 	}
+
 	if _, err := findEnvVar(nil, "SENTRY_DSN", convex.DeploymentTypeDev); !errors.Is(err, errEnvVarNotFound) {
 		t.Errorf("error on empty list = %v, want it to wrap errEnvVarNotFound", err)
 	}

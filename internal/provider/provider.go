@@ -75,6 +75,7 @@ func (p *convexProvider) Schema(_ context.Context, _ provider.SchemaRequest, res
 func (p *convexProvider) Configure(ctx context.Context, req provider.ConfigureRequest, resp *provider.ConfigureResponse) {
 	var config providerModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -90,6 +91,7 @@ func (p *convexProvider) Configure(ctx context.Context, req provider.ConfigureRe
 				envEndpoint+" environment variable.",
 		)
 	}
+
 	if config.Token.IsUnknown() {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("token"),
@@ -98,23 +100,28 @@ func (p *convexProvider) Configure(ctx context.Context, req provider.ConfigureRe
 				envToken+" environment variable.",
 		)
 	}
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	// Configuration wins over the environment.
 	endpoint := os.Getenv(envEndpoint)
+
 	if !config.Endpoint.IsNull() {
 		endpoint = config.Endpoint.ValueString()
 	}
+
 	if endpoint == "" {
 		endpoint = convex.DefaultBaseURL
 	}
 
 	token := os.Getenv(envToken)
+
 	if !config.Token.IsNull() {
 		token = config.Token.ValueString()
 	}
+
 	if token == "" {
 		resp.Diagnostics.AddAttributeError(
 			path.Root("token"),
@@ -127,6 +134,7 @@ func (p *convexProvider) Configure(ctx context.Context, req provider.ConfigureRe
 	}
 
 	client, err := convex.NewAuthenticated(endpoint, token)
+
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Unable to create Convex API client",

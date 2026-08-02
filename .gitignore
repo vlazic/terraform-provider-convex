@@ -13,3 +13,4 @@ crash.log
 # Local dev overrides
 .terraformrc
 terraform.rc
+.idea

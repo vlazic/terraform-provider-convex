@@ -62,7 +62,13 @@ func (r *defaultEnvironmentVariableResource) Schema(_ context.Context, _ resourc
 			"deployment is created and does not push them to deployments that already exist, nor keep them in " +
 			"sync. Changing one here has no effect on a running deployment.\n\n" +
 			"Each resource manages a single `(name, deployment_type)` pair, which is exactly how the API keys " +
-			"these variables. Variables that Terraform does not declare are left alone.",
+			"these variables. Variables that Terraform does not declare are left alone.\n\n" +
+			"The API only upserts, so it cannot tell a create from an update. Creating a variable that " +
+			"already exists therefore fails rather than silently overwriting a value set elsewhere; import " +
+			"it instead -- the error reports the import command.\n\n" +
+			"Writes are retried on transient 5xx failures, which Convex has been seen returning when several " +
+			"variables of one project are written at once. If it persists, `terraform apply -parallelism=1` " +
+			"serialises them.",
 		Attributes: map[string]schema.Attribute{
 			"project_id": schema.Int64Attribute{
 				Required:            true,
@@ -114,7 +120,9 @@ func (r *defaultEnvironmentVariableResource) Configure(_ context.Context, req re
 	if req.ProviderData == nil {
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected resource configure type",
@@ -122,12 +130,14 @@ func (r *defaultEnvironmentVariableResource) Configure(_ context.Context, req re
 		)
 		return
 	}
+
 	r.client = client
 }
 
 func (r *defaultEnvironmentVariableResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan defaultEnvironmentVariableResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -140,6 +150,7 @@ func (r *defaultEnvironmentVariableResource) Create(ctx context.Context, req res
 	deploymentType := convex.DeploymentType(plan.DeploymentType.ValueString())
 
 	existing, err := r.getEnvVar(ctx, projectID, name, deploymentType)
+
 	switch {
 	case err == nil:
 		resp.Diagnostics.AddError(
@@ -166,6 +177,7 @@ func (r *defaultEnvironmentVariableResource) Create(ctx context.Context, req res
 		)
 		return
 	}
+
 	tflog.Debug(ctx, "set Convex default environment variable", map[string]any{
 		"name": name, "deployment_type": string(deploymentType), "project_id": projectID,
 	})
@@ -176,6 +188,7 @@ func (r *defaultEnvironmentVariableResource) Create(ctx context.Context, req res
 func (r *defaultEnvironmentVariableResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state defaultEnvironmentVariableResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -185,14 +198,17 @@ func (r *defaultEnvironmentVariableResource) Read(ctx context.Context, req resou
 	deploymentType := convex.DeploymentType(state.DeploymentType.ValueString())
 
 	found, err := r.getEnvVar(ctx, projectID, name, deploymentType)
+
 	if err != nil {
 		var apiErr *convex.APIError
+
 		if errors.Is(err, errEnvVarNotFound) || (errors.As(err, &apiErr) && apiErr.IsNotFound()) {
 			tflog.Debug(ctx, "Convex default environment variable no longer exists, removing from state",
 				map[string]any{"name": name, "project_id": projectID})
 			resp.State.RemoveResource(ctx)
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error reading Convex default environment variable",
 			fmt.Sprintf("Could not read %q for %s deployments in project %d: %s",
@@ -208,6 +224,7 @@ func (r *defaultEnvironmentVariableResource) Read(ctx context.Context, req resou
 func (r *defaultEnvironmentVariableResource) Update(ctx context.Context, req resource.UpdateRequest, resp *resource.UpdateResponse) {
 	var plan defaultEnvironmentVariableResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -233,6 +250,7 @@ func (r *defaultEnvironmentVariableResource) Update(ctx context.Context, req res
 func (r *defaultEnvironmentVariableResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state defaultEnvironmentVariableResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -241,22 +259,28 @@ func (r *defaultEnvironmentVariableResource) Delete(ctx context.Context, req res
 	name := state.Name.ValueString()
 	deploymentType := convex.DeploymentType(state.DeploymentType.ValueString())
 
-	deleted, err := convex.DeleteDefaultEnvironmentVariable(ctx, r.client, projectID, name, deploymentType)
-	if err != nil {
-		resp.Diagnostics.AddError("Error deleting Convex default environment variable", err.Error())
-		return
-	}
-	if err := convex.CheckResponse(deleted); err != nil {
+	if err := convex.DeleteDefaultEnvironmentVariable(ctx, r.client, projectID, name, deploymentType); err != nil {
 		var apiErr *convex.APIError
+
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			// Already gone, which is the desired end state.
 			return
 		}
-		resp.Diagnostics.AddError(
-			"Error deleting Convex default environment variable",
-			fmt.Sprintf("Could not delete %q for %s deployments in project %d: %s",
-				name, deploymentType, projectID, err),
-		)
+
+		detail := fmt.Sprintf("Could not delete %q for %s deployments in project %d: %s",
+			name, deploymentType, projectID, err)
+
+		// A server-side fault that outlives the retries leaves the resource in
+		// state, which blocks `terraform destroy` on everything that depends on
+		// it. Say how to get unstuck rather than leaving that to be worked out.
+		if convex.IsTransient(err) {
+			detail += "\n\nThe retries were exhausted, so this is a fault on the Convex side rather than " +
+				"something wrong with the configuration. Try again in a few minutes. If it keeps failing, " +
+				"delete the variable in the Convex dashboard and drop it from state to unblock the destroy:" +
+				"\n\n    terraform state rm 'convex_default_environment_variable.<name>'"
+		}
+
+		resp.Diagnostics.AddError("Error deleting Convex default environment variable", detail)
 	}
 }
 
@@ -264,6 +288,7 @@ func (r *defaultEnvironmentVariableResource) ImportState(ctx context.Context, re
 	// Split on the first two separators only, so that a variable name
 	// containing "/" survives the round trip.
 	parts := strings.SplitN(req.ID, "/", 3)
+
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -272,9 +297,11 @@ func (r *defaultEnvironmentVariableResource) ImportState(ctx context.Context, re
 		)
 		return
 	}
+
 	rawProjectID, deploymentType, name := parts[0], parts[1], parts[2]
 
 	projectID, err := strconv.ParseInt(rawProjectID, 10, 64)
+
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -282,6 +309,7 @@ func (r *defaultEnvironmentVariableResource) ImportState(ctx context.Context, re
 		)
 		return
 	}
+
 	switch convex.DeploymentType(deploymentType) {
 	case convex.DeploymentTypeDev, convex.DeploymentTypeProd,
 		convex.DeploymentTypePreview, convex.DeploymentTypeCustom:
@@ -299,13 +327,9 @@ func (r *defaultEnvironmentVariableResource) ImportState(ctx context.Context, re
 }
 
 // setEnvVar upserts a variable. The endpoint returns no body, so there is
-// nothing to decode.
+// nothing to decode. Transient failures are retried inside the client helper.
 func (r *defaultEnvironmentVariableResource) setEnvVar(ctx context.Context, projectID int64, name string, deploymentType convex.DeploymentType, value string) error {
-	updated, err := convex.SetDefaultEnvironmentVariable(ctx, r.client, projectID, name, deploymentType, value)
-	if err != nil {
-		return err
-	}
-	return convex.CheckResponse(updated)
+	return convex.SetDefaultEnvironmentVariable(ctx, r.client, projectID, name, deploymentType, value)
 }
 
 // getEnvVar finds one variable. The list endpoint filters server-side on both
@@ -317,15 +341,19 @@ func (r *defaultEnvironmentVariableResource) getEnvVar(ctx context.Context, proj
 			Name:           &name,
 			DeploymentType: &deploymentType,
 		})
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(listed); err != nil {
 		return nil, err
 	}
+
 	if listed.JSON200 == nil {
 		return nil, errors.New("the API returned a successful status with no environment variable list")
 	}
+
 	return findEnvVar(listed.JSON200.Items, name, deploymentType)
 }
 
@@ -340,11 +368,13 @@ func findEnvVar(items []convex.DefaultEnvironmentVariableResponse, name string, 
 		if items[i].Name != name {
 			continue
 		}
+
 		for _, candidate := range items[i].DeploymentTypes {
 			if candidate == deploymentType {
 				return &items[i], nil
 			}
 		}
 	}
+
 	return nil, fmt.Errorf("%w: %q is not set for %s deployments", errEnvVarNotFound, name, deploymentType)
 }

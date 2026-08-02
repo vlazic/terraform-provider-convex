@@ -118,7 +118,9 @@ func (r *projectResource) Configure(_ context.Context, req resource.ConfigureReq
 		// Provider has not been configured yet; the framework calls this again.
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected resource configure type",
@@ -126,12 +128,14 @@ func (r *projectResource) Configure(_ context.Context, req resource.ConfigureReq
 		)
 		return
 	}
+
 	r.client = client
 }
 
 func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
 	var plan projectResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -139,12 +143,15 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 	args := convex.PlatformCreateProjectArgs{
 		ProjectName: plan.Name.ValueString(),
 	}
+
 	teamID := plan.TeamID.ValueInt64()
 	created, err := r.client.CreateProjectWithResponse(ctx, teamID, args)
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error creating Convex project", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(created); err != nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex project",
@@ -152,6 +159,7 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 		)
 		return
 	}
+
 	if created.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error creating Convex project",
@@ -166,6 +174,7 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 	// The create endpoint derives the slug from the name and takes no slug
 	// parameter, so an explicitly configured slug needs a follow-up rename.
 	var desiredSlug string
+
 	if !plan.Slug.IsNull() && !plan.Slug.IsUnknown() && plan.Slug.ValueString() != created.JSON200.Slug {
 		desiredSlug = plan.Slug.ValueString()
 	}
@@ -183,9 +192,11 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 		updated, err := r.client.UpdateProjectWithResponse(ctx, projectID, convex.PlatformUpdateProjectArgs{
 			Slug: &desiredSlug,
 		})
+
 		if err == nil {
 			err = convex.CheckResponse(updated)
 		}
+
 		if err != nil {
 			saveFallbackState()
 			resp.Diagnostics.AddError(
@@ -201,6 +212,7 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 	// Read back rather than assembling state from the create response, which
 	// omits the team slug, creation time and deployment names.
 	project, err := r.getProject(ctx, projectID)
+
 	if err != nil {
 		saveFallbackState()
 		resp.Diagnostics.AddError(
@@ -219,19 +231,23 @@ func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest
 func (r *projectResource) Read(ctx context.Context, req resource.ReadRequest, resp *resource.ReadResponse) {
 	var state projectResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	project, err := r.getProject(ctx, state.ID.ValueInt64())
+
 	if err != nil {
 		var apiErr *convex.APIError
+
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			tflog.Debug(ctx, "Convex project no longer exists, removing from state",
 				map[string]any{"id": state.ID.ValueInt64()})
 			resp.State.RemoveResource(ctx)
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error reading Convex project",
 			fmt.Sprintf("Could not read project %d: %s", state.ID.ValueInt64(), err),
@@ -247,6 +263,7 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 	var plan, state projectResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -256,9 +273,11 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 	projectID := plan.ID.ValueInt64()
 
 	var args convex.PlatformUpdateProjectArgs
+
 	if !plan.Name.Equal(state.Name) {
 		args.Name = plan.Name.ValueStringPointer()
 	}
+
 	// An unknown slug means the practitioner removed it from configuration; the
 	// existing server-side value stands rather than being reset.
 	if !plan.Slug.IsUnknown() && !plan.Slug.Equal(state.Slug) {
@@ -268,6 +287,7 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 	if args.Name == nil && args.Slug == nil {
 		// Nothing the API can act on -- just refresh the computed attributes.
 		project, err := r.getProject(ctx, projectID)
+
 		if err != nil {
 			resp.Diagnostics.AddError(
 				"Error reading Convex project",
@@ -275,16 +295,19 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 			)
 			return
 		}
+
 		applyProject(&plan, project)
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		return
 	}
 
 	updated, err := r.client.UpdateProjectWithResponse(ctx, projectID, args)
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error updating Convex project", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(updated); err != nil {
 		resp.Diagnostics.AddError(
 			"Error updating Convex project",
@@ -292,6 +315,7 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 		)
 		return
 	}
+
 	if updated.JSON200 == nil {
 		resp.Diagnostics.AddError(
 			"Error updating Convex project",
@@ -307,22 +331,27 @@ func (r *projectResource) Update(ctx context.Context, req resource.UpdateRequest
 func (r *projectResource) Delete(ctx context.Context, req resource.DeleteRequest, resp *resource.DeleteResponse) {
 	var state projectResourceModel
 	resp.Diagnostics.Append(req.State.Get(ctx, &state)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
 
 	projectID := state.ID.ValueInt64()
 	deleted, err := r.client.DeleteProjectWithResponse(ctx, projectID)
+
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting Convex project", err.Error())
 		return
 	}
+
 	if err := convex.CheckResponse(deleted); err != nil {
 		var apiErr *convex.APIError
+
 		if errors.As(err, &apiErr) && apiErr.IsNotFound() {
 			// Already gone, which is the desired end state.
 			return
 		}
+
 		resp.Diagnostics.AddError(
 			"Error deleting Convex project",
 			fmt.Sprintf("Could not delete project %d: %s", projectID, err),
@@ -332,6 +361,7 @@ func (r *projectResource) Delete(ctx context.Context, req resource.DeleteRequest
 
 func (r *projectResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
 	projectID, err := strconv.ParseInt(req.ID, 10, 64)
+
 	if err != nil {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
@@ -340,6 +370,7 @@ func (r *projectResource) ImportState(ctx context.Context, req resource.ImportSt
 		)
 		return
 	}
+
 	// Read fills in the remaining attributes, including team_id.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), projectID)...)
 }
@@ -348,15 +379,19 @@ func (r *projectResource) ImportState(ctx context.Context, req resource.ImportSt
 // responses so callers can distinguish a missing project from a real failure.
 func (r *projectResource) getProject(ctx context.Context, projectID int64) (*convex.ProjectResponse, error) {
 	got, err := r.client.GetProjectByIdWithResponse(ctx, projectID)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(got); err != nil {
 		return nil, err
 	}
+
 	if got.JSON200 == nil {
 		return nil, errors.New("the API returned a successful status with no project body")
 	}
+
 	return got.JSON200, nil
 }
 

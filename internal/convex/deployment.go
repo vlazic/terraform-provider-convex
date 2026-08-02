@@ -25,22 +25,28 @@ var ErrNotCloudDeployment = errors.New("deployment is not a cloud deployment")
 // Hence the explicit check.
 func AsCloudDeployment(resp *PlatformDeploymentResponse) (*CloudDeployment, error) {
 	raw, err := resp.MarshalJSON()
+
 	if err != nil {
 		return nil, fmt.Errorf("reading deployment response: %w", err)
 	}
+
 	var probe struct {
 		Kind string `json:"kind"`
 	}
+
 	if err := json.Unmarshal(raw, &probe); err != nil {
 		return nil, fmt.Errorf("reading deployment kind: %w", err)
 	}
+
 	if probe.Kind != deploymentKindCloud {
 		return nil, fmt.Errorf("%w: kind is %q", ErrNotCloudDeployment, probe.Kind)
 	}
 
 	deployment, err := resp.AsPlatformDeploymentResponse0()
+
 	if err != nil {
 		return nil, fmt.Errorf("decoding cloud deployment: %w", err)
 	}
+
 	return &deployment, nil
 }

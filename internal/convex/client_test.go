@@ -59,22 +59,29 @@ func TestCheckResponse(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := CheckResponse(tt.resp)
+
 			if !tt.wantErr {
 				if err != nil {
 					t.Fatalf("CheckResponse() = %v, want nil", err)
 				}
+
 				return
 			}
+
 			if err == nil {
 				t.Fatal("CheckResponse() = nil, want error")
 			}
+
 			if got := err.Error(); got != tt.wantMsg {
 				t.Errorf("error message = %q, want %q", got, tt.wantMsg)
 			}
+
 			var apiErr *APIError
+
 			if !errors.As(err, &apiErr) {
 				t.Fatalf("error is %T, want *APIError", err)
 			}
+
 			if apiErr.StatusCode != tt.resp.status {
 				t.Errorf("StatusCode = %d, want %d", apiErr.StatusCode, tt.resp.status)
 			}
@@ -86,14 +93,17 @@ func TestAPIErrorIsNotFound(t *testing.T) {
 	notFound := CheckResponse(stubResponse{status: http.StatusNotFound, body: []byte(`{"code":"ProjectNotFound"}`)})
 
 	var apiErr *APIError
+
 	if !errors.As(notFound, &apiErr) {
 		t.Fatalf("error is %T, want *APIError", notFound)
 	}
+
 	if !apiErr.IsNotFound() {
 		t.Error("IsNotFound() = false for a 404, want true")
 	}
 
 	other := CheckResponse(stubResponse{status: http.StatusConflict})
+
 	if errors.As(other, &apiErr) && apiErr.IsNotFound() {
 		t.Error("IsNotFound() = true for a 409, want false")
 	}
@@ -101,20 +111,25 @@ func TestAPIErrorIsNotFound(t *testing.T) {
 
 func TestNewAuthenticatedSetsBearerToken(t *testing.T) {
 	client, err := NewAuthenticated("", "tok_123")
+
 	if err != nil {
 		t.Fatalf("NewAuthenticated() error = %v", err)
 	}
+
 	if client.ClientInterface == nil {
 		t.Fatal("NewAuthenticated() returned a client with no underlying implementation")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, DefaultBaseURL+"/projects/1", nil)
+
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	if err := bearerAuth("tok_123")(t.Context(), req); err != nil {
 		t.Fatalf("bearerAuth() error = %v", err)
 	}
+
 	if got, want := req.Header.Get("Authorization"), "Bearer tok_123"; got != want {
 		t.Errorf("Authorization header = %q, want %q", got, want)
 	}
@@ -126,6 +141,7 @@ func TestNewAuthenticatedDefaultsBaseURL(t *testing.T) {
 	if _, err := NewAuthenticated("https://convex.internal/v1", "tok"); err != nil {
 		t.Errorf("NewAuthenticated(custom) error = %v", err)
 	}
+
 	if _, err := NewAuthenticated("", "tok"); err != nil {
 		t.Errorf("NewAuthenticated(default) error = %v", err)
 	}

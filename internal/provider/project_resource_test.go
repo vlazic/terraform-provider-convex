@@ -17,6 +17,7 @@ func TestProjectResourceSchema(t *testing.T) {
 	if resp.Diagnostics.HasError() {
 		t.Fatalf("Schema() diagnostics: %+v", resp.Diagnostics)
 	}
+
 	if diags := resp.Schema.ValidateImplementation(ctx); diags.HasError() {
 		t.Fatalf("ValidateImplementation() diagnostics: %+v", diags)
 	}
@@ -53,6 +54,7 @@ func TestApplyCreateResponseLeavesNothingUnknown(t *testing.T) {
 		"prod_deployment_name": model.ProdDeploymentName.IsUnknown(),
 		"dev_deployment_name":  model.DevDeploymentName.IsUnknown(),
 	}
+
 	for attr, isUnknown := range unknowns {
 		if isUnknown {
 			t.Errorf("%s is still unknown after applyCreateResponse", attr)
@@ -62,6 +64,7 @@ func TestApplyCreateResponseLeavesNothingUnknown(t *testing.T) {
 	if model.ID != types.Int64Value(42) {
 		t.Errorf("id = %v, want 42", model.ID)
 	}
+
 	if model.Slug != types.StringValue("my-project") {
 		t.Errorf("slug = %v, want my-project", model.Slug)
 	}
@@ -97,6 +100,7 @@ func TestApplyProject(t *testing.T) {
 		{"prod_deployment_name", model.ProdDeploymentName, types.StringValue(prod)},
 		{"dev_deployment_name", model.DevDeploymentName, types.StringNull()},
 	}
+
 	for _, c := range checks {
 		if c.got != c.want {
 			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)

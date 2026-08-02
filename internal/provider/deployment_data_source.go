@@ -184,7 +184,9 @@ func (d *deploymentDataSource) Configure(_ context.Context, req datasource.Confi
 	if req.ProviderData == nil {
 		return
 	}
+
 	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+
 	if !ok {
 		resp.Diagnostics.AddError(
 			"Unexpected data source configure type",
@@ -192,12 +194,14 @@ func (d *deploymentDataSource) Configure(_ context.Context, req datasource.Confi
 		)
 		return
 	}
+
 	d.client = client
 }
 
 func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {
 	var config deploymentDataSourceModel
 	resp.Diagnostics.Append(req.Config.Get(ctx, &config)...)
+
 	if resp.Diagnostics.HasError() {
 		return
 	}
@@ -209,6 +213,7 @@ func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequ
 		deployment, err = d.getByName(ctx, config.Name.ValueString())
 	} else {
 		params := &convex.GetDeploymentInProjectByProjectIdParams{}
+
 		switch {
 		case isSet(config.Reference):
 			params.Reference = config.Reference.ValueStringPointer()
@@ -225,6 +230,7 @@ func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequ
 			)
 			return
 		}
+
 		deployment, err = d.getInProject(ctx, config.ProjectID.ValueInt64(), params)
 	}
 
@@ -255,28 +261,36 @@ func (d *deploymentDataSource) Read(ctx context.Context, req datasource.ReadRequ
 
 func (d *deploymentDataSource) getByName(ctx context.Context, name string) (*convex.CloudDeployment, error) {
 	got, err := d.client.PlatformGetDeploymentWithResponse(ctx, name)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(got); err != nil {
 		return nil, fmt.Errorf("could not read deployment %q: %w", name, err)
 	}
+
 	if got.JSON200 == nil {
 		return nil, fmt.Errorf("the API returned a successful status with no body for deployment %q", name)
 	}
+
 	return convex.AsCloudDeployment(got.JSON200)
 }
 
 func (d *deploymentDataSource) getInProject(ctx context.Context, projectID int64, params *convex.GetDeploymentInProjectByProjectIdParams) (*convex.CloudDeployment, error) {
 	got, err := d.client.GetDeploymentInProjectByProjectIdWithResponse(ctx, projectID, params)
+
 	if err != nil {
 		return nil, err
 	}
+
 	if err := convex.CheckResponse(got); err != nil {
 		return nil, fmt.Errorf("could not find a matching deployment in project %d: %w", projectID, err)
 	}
+
 	if got.JSON200 == nil {
 		return nil, fmt.Errorf("the API returned a successful status with no body for project %d", projectID)
 	}
+
 	return convex.AsCloudDeployment(got.JSON200)
 }
