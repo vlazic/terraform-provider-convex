@@ -8,10 +8,12 @@ and the [Convex Management API](https://docs.convex.dev/management-api).
 
 Early. Two resources and two data sources are implemented:
 
-| Resource            | Create | Read | Update | Delete | Import        |
-| ------------------- | ------ | ---- | ------ | ------ | ------------- |
-| `convex_project`    | yes    | yes  | yes    | yes    | by numeric ID |
-| `convex_deployment` | yes    | yes  | yes    | yes    | by name       |
+| Resource                    | Create | Read | Update           | Delete | Import                        |
+| --------------------------- | ------ | ---- | ---------------- | ------ | ----------------------------- |
+| `convex_project`            | yes    | yes  | yes              | yes    | by numeric ID                 |
+| `convex_deployment`         | yes    | yes  | yes              | yes    | by name                       |
+| `convex_deploy_key`         | yes    | yes  | no, replace only | yes    | `<deployment_name>/<key_name>` |
+| `convex_preview_deploy_key` | yes    | yes  | no, replace only | yes    | `<project_id>/<key_name>`      |
 
 | Data source         | Lookup keys                                            |
 | ------------------- | ------------------------------------------------------ |
@@ -95,6 +97,34 @@ find the numeric team ID that `convex_project.team_id` expects.
   than resetting it to the default. Set it explicitly to the default instead.
 - `last_deploy_time` changes whenever code is pushed, entirely outside
   Terraform, so it is refreshed on every read and never used to plan changes.
+
+### Notes on the deploy key resources
+
+**The generated secret is written to Terraform state in plain text.** Convex
+returns a deploy key's value exactly once, in the create response, and no
+endpoint can fetch it again. A provider cannot avoid persisting it, so treat
+the state file as a secret: use a remote backend with encryption at rest and
+restricted access. This applies to both `convex_deploy_key` and
+`convex_preview_deploy_key`.
+
+- **Nothing is updatable.** Convex has no endpoint for modifying a deploy key,
+  so every configurable attribute forces replacement. Replacing means the new
+  key is created and the old one destroyed — anything still holding the old
+  value breaks at that moment. Plan key rotation accordingly.
+- **Reads go through the list endpoint.** There is no get-by-id for deploy
+  keys, so the provider lists the deployment's or project's keys and matches on
+  `name`. Names must therefore be unique within their scope, which the API
+  already assumes — its delete endpoint accepts a name as an identifier.
+- **Importing cannot recover the secret.** An imported key has `key` set to
+  null, and the import emits a warning saying so. Everything else refreshes
+  normally. To get a usable secret you have to replace the key.
+- `allowed_actions` is optional on `convex_deploy_key`. Leaving it out accepts
+  whatever Convex grants by default, which is broader than most CI jobs need —
+  `["deployment:deploy"]` is usually the right scope for a deploy pipeline.
+  Preview deploy keys have no equivalent setting, so there the attribute is
+  read-only.
+- `last_used_time` changes whenever the key is used, entirely outside
+  Terraform.
 
 ### Notes on the data sources
 

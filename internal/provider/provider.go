@@ -143,6 +143,8 @@ func (p *convexProvider) Resources(_ context.Context) []func() resource.Resource
 	return []func() resource.Resource{
 		NewProjectResource,
 		NewDeploymentResource,
+		NewDeployKeyResource,
+		NewPreviewDeployKeyResource,
 	}
 }
 

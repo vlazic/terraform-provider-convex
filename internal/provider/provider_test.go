@@ -45,9 +45,15 @@ func TestProviderResources(t *testing.T) {
 		got[metadata.TypeName] = true
 	}
 
-	for _, want := range []string{"convex_project", "convex_deployment"} {
-		if !got[want] {
-			t.Errorf("resource %q is not registered", want)
+	want := []string{
+		"convex_project",
+		"convex_deployment",
+		"convex_deploy_key",
+		"convex_preview_deploy_key",
+	}
+	for _, name := range want {
+		if !got[name] {
+			t.Errorf("resource %q is not registered", name)
 		}
 	}
 }
