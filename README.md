@@ -14,6 +14,7 @@ Early. Two resources and two data sources are implemented:
 | `convex_deployment`         | yes    | yes  | yes              | yes    | by name                       |
 | `convex_deploy_key`         | yes    | yes  | no, replace only | yes    | `<deployment_name>/<key_name>` |
 | `convex_preview_deploy_key` | yes    | yes  | no, replace only | yes    | `<project_id>/<key_name>`      |
+| `convex_custom_domain`      | yes    | yes  | no, replace only | yes    | `<deployment_name>/<request_destination>/<domain>` |
 
 | Data source         | Lookup keys                                            |
 | ------------------- | ------------------------------------------------------ |
@@ -125,6 +126,26 @@ restricted access. This applies to both `convex_deploy_key` and
   read-only.
 - `last_used_time` changes whenever the key is used, entirely outside
   Terraform.
+
+### Notes on `convex_custom_domain`
+
+- **Verification is asynchronous and Terraform does not wait for it.** Creating
+  the resource registers the domain and returns immediately; Convex verifies it
+  once the DNS records resolve. So `verified` is normally `false` right after
+  the first apply and flips to `true` on a later refresh. Point your DNS at the
+  deployment separately — this resource does not manage DNS records.
+- `request_destination` is part of the identity, not a detail. `convexCloud`
+  fronts the deployment's `.convex.cloud` API URL and `convexSite` fronts its
+  `.convex.site` HTTP actions URL, and the same domain can be registered for
+  both. It is required rather than defaulted, because silently picking the
+  wrong one would be hard to notice.
+- Nothing is updatable, so every attribute forces replacement. Reads go through
+  the list endpoint and match on domain + destination, since there is no
+  get-by-id.
+- `verified` is a convenience for `verification_time != null`; both are
+  exposed.
+- Note that `convex_deployment.deployment_url` always reports the
+  `.convex.cloud` URL, even once a custom domain is in place.
 
 ### Notes on the data sources
 

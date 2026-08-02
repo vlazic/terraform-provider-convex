@@ -50,6 +50,7 @@ func TestProviderResources(t *testing.T) {
 		"convex_deployment",
 		"convex_deploy_key",
 		"convex_preview_deploy_key",
+		"convex_custom_domain",
 	}
 	for _, name := range want {
 		if !got[name] {

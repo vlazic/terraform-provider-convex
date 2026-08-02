@@ -145,6 +145,7 @@ func (p *convexProvider) Resources(_ context.Context) []func() resource.Resource
 		NewDeploymentResource,
 		NewDeployKeyResource,
 		NewPreviewDeployKeyResource,
+		NewCustomDomainResource,
 	}
 }
 
