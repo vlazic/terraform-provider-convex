@@ -11,6 +11,10 @@ import (
 
 // Rules the Convex API documents for a deployment reference. Uniqueness within
 // the project is the one rule that can only be checked server-side.
+// deploymentURLPattern guards `deployment_url` at plan time, so a name or a
+// bare host fails before an apply turns it into a confusing request error.
+var deploymentURLPattern = regexp.MustCompile(`^https?://[^/\s]+`)
+
 var (
 	referenceCharset        = regexp.MustCompile(`^[a-z0-9/-]+$`)
 	referenceLooksLikeAName = regexp.MustCompile(`^[a-z]+-[a-z]+-[0-9]+$`)

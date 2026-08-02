@@ -156,21 +156,13 @@ func (r *deployKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 }
 
 func (r *deployKeyResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+	data, ok := providerDataFrom(req.ProviderData, &resp.Diagnostics)
 
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected resource configure type",
-			fmt.Sprintf("Expected *convex.ClientWithResponses, got %T. This is a bug in the provider.", req.ProviderData),
-		)
 		return
 	}
 
-	r.client = client
+	r.client = data.Management
 }
 
 func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {

@@ -7,7 +7,7 @@
 // such parameter, however, appears elsewhere in the same document in a
 // well-formed operation, so we backfill the missing schema from those.
 //
-// The vendored api/openapi.json is left untouched; the normalized copy is
+// The vendored input document is left untouched; the normalized copy is
 // written alongside it and is the file codegen actually reads.
 package main
 

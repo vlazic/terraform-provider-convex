@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"net/http"
 	"time"
 )
 
@@ -131,17 +129,4 @@ func retryTransient(ctx context.Context, fn func() error) error {
 	}
 
 	return fmt.Errorf("giving up after %d attempts: %w", envVarMaxAttempts, err)
-}
-
-// IsTransient reports whether an error looks worth retrying: a rate limit or a
-// server-side fault, as opposed to a request the server rejected on its
-// merits.
-func IsTransient(err error) bool {
-	var apiErr *APIError
-
-	if !errors.As(err, &apiErr) {
-		return false
-	}
-
-	return apiErr.StatusCode == http.StatusTooManyRequests || apiErr.StatusCode >= http.StatusInternalServerError
 }

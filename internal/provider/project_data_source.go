@@ -116,21 +116,13 @@ func (d *projectDataSource) ConfigValidators(_ context.Context) []datasource.Con
 }
 
 func (d *projectDataSource) Configure(_ context.Context, req datasource.ConfigureRequest, resp *datasource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		return
-	}
-
-	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+	data, ok := providerDataFrom(req.ProviderData, &resp.Diagnostics)
 
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected data source configure type",
-			fmt.Sprintf("Expected *convex.ClientWithResponses, got %T. This is a bug in the provider.", req.ProviderData),
-		)
 		return
 	}
 
-	d.client = client
+	d.client = data.Management
 }
 
 func (d *projectDataSource) Read(ctx context.Context, req datasource.ReadRequest, resp *datasource.ReadResponse) {

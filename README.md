@@ -6,14 +6,16 @@ and the [Convex Management API](https://docs.convex.dev/management-api).
 
 ## Status
 
-Version 0.1.0 — the first release. Six resources and two data sources, all
-with import support.
+Seven resources and two data sources, all with import support.
+
+The latest release is **0.1.0**, which shipped six of them.
+`convex_environment_variable` is on `master` and not yet released — see
+[CHANGELOG.md](CHANGELOG.md).
 
 The surface is complete enough to manage projects, deployments, deploy keys,
-custom domains and default environment variables end to end. It is a 0.x
-release: the API surface may still change, and there is no acceptance test
-suite yet, so behaviour is covered by unit tests and an offline plan rather
-than against a live API.
+custom domains and environment variables end to end. Being 0.x, the API
+surface may still change, and there is no acceptance test suite yet — behaviour
+is covered by unit tests and an offline plan rather than against a live API.
 
 | Resource                              | Update           |
 | ------------------------------------- | ---------------- |
@@ -23,6 +25,7 @@ than against a live API.
 | `convex_preview_deploy_key`           | no, replace only |
 | `convex_custom_domain`                | no, replace only |
 | `convex_default_environment_variable` | value only       |
+| `convex_environment_variable`         | value only       |
 
 | Data source         | Lookup keys                                  |
 | ------------------- | -------------------------------------------- |
@@ -82,8 +85,9 @@ front:
 - **Deploy key secrets are stored in Terraform state in plain text.** Convex
   returns them only once, at creation, so no provider can avoid it and import
   cannot recover them. Treat state as a secret.
-- **Default environment variables apply only to deployments created
-  afterwards.** Convex does not sync them to existing deployments.
+- **Two kinds of environment variable.** `convex_environment_variable` changes
+  a running deployment. `convex_default_environment_variable` only seeds
+  deployments created *afterwards* — Convex does not sync it to existing ones.
 - **Custom domain verification is asynchronous.** `verified` stays `false`
   until a later refresh picks up the DNS check, and this resource does not
   manage DNS records.
@@ -93,9 +97,21 @@ front:
 
 ## Development
 
+Two Convex APIs are wrapped, each with its own generated client:
+
+| Package | API | Addressed at | Auth header |
+| --- | --- | --- | --- |
+| `internal/convex` | Management | `api.convex.dev/v1` | `Bearer <token>` |
+| `internal/deployapi` | Deployment Platform | each deployment's own URL | `Convex <token>` |
+
+The same team access token authenticates both, so the provider takes a single
+`token`. Shared error decoding lives in `internal/apierr`. The deployment spec
+is not served anywhere, so `make fetch-spec` pulls it from the convex-backend
+repository rather than from the API.
+
 ```bash
-make fetch-spec   # refresh api/openapi.json from https://api.convex.dev/v1/openapi.json
-make generate     # normalize the spec, then regenerate the API client
+make fetch-spec   # refresh both vendored OpenAPI documents
+make generate     # normalize the specs, then regenerate both API clients
 make docs         # regenerate docs/ from the provider schemas
 make test         # unit tests
 make smoke        # offline end-to-end plan through real Terraform
@@ -104,9 +120,9 @@ make build        # build the provider binary
 make install      # install into the local plugin mirror
 ```
 
-Generated artifacts (`api/openapi.normalized.json`,
-`internal/convex/client.gen.go` and `docs/`) are committed, so a checkout
-builds without running codegen. CI fails if they are stale.
+Generated artifacts (`api/management-openapi.normalized.json`, both
+`client.gen.go` files and `docs/`) are committed, so a checkout builds without
+running codegen. CI fails if they are stale.
 
 ### The smoke test
 
@@ -135,7 +151,7 @@ Thirteen path parameters in the upstream OpenAPI document declare neither
 `schema` nor `content`, which is invalid and makes `oapi-codegen` fail
 outright. `internal/tools/normalizespec` backfills each one from a well-formed
 occurrence of the same parameter elsewhere in the document, refusing to guess
-if those occurrences disagree. The vendored `api/openapi.json` stays
+if those occurrences disagree. The vendored `api/management-openapi.json` stays
 byte-identical to upstream, so refreshing it is a clean overwrite.
 
 Generated per-operation response wrappers carry an `HTTPResponse` suffix,

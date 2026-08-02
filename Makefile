@@ -15,10 +15,14 @@ MIRROR_DIR       := $(HOME)/.terraform.d/plugins/$(PLUGIN_HOST)/$(PLUGIN_NAMESPA
 .PHONY: default
 default: build
 
-# Refresh the vendored OpenAPI document from the live API.
+# Refresh the vendored OpenAPI documents.
+#
+# The management spec is served by the API itself. The deployment spec is not
+# published anywhere servable, so it comes from the convex-backend repository.
 .PHONY: fetch-spec
 fetch-spec:
-	curl -fsSL https://api.convex.dev/v1/openapi.json -o api/openapi.json
+	curl -fsSL https://api.convex.dev/v1/openapi.json -o api/management-openapi.json
+	curl -fsSL https://raw.githubusercontent.com/get-convex/convex-backend/main/npm-packages/@convex-dev/platform/deployment-openapi.json -o api/deployment-openapi.json
 
 # Normalize the spec and regenerate the API client.
 .PHONY: generate

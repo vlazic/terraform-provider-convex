@@ -4,9 +4,11 @@ package provider
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	"github.com/hashicorp/terraform-plugin-framework/datasource"
+	"github.com/hashicorp/terraform-plugin-framework/diag"
 	"github.com/hashicorp/terraform-plugin-framework/function"
 	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/provider"
@@ -38,6 +40,39 @@ func New(version string) func() provider.Provider {
 	return func() provider.Provider {
 		return &convexProvider{version: version}
 	}
+}
+
+// providerData is what resources and data sources receive from Configure.
+//
+// Most of them need only the management client. The ones backed by the
+// Deployment Platform API build their own client per deployment, because that
+// API is addressed at each deployment's own URL rather than a single host, so
+// they need the raw token too.
+type providerData struct {
+	Management *convex.ClientWithResponses
+	Token      string
+}
+
+// providerDataFrom pulls the configured clients out of what the framework
+// hands a resource or data source. A nil value means the provider has not been
+// configured yet, and the framework will call Configure again.
+func providerDataFrom(raw any, diags *diag.Diagnostics) (*providerData, bool) {
+	if raw == nil {
+		return nil, false
+	}
+
+	data, ok := raw.(*providerData)
+
+	if !ok {
+		diags.AddError(
+			"Unexpected provider data type",
+			fmt.Sprintf("Expected *providerData, got %T. This is a bug in the provider.", raw),
+		)
+
+		return nil, false
+	}
+
+	return data, true
 }
 
 // providerModel maps the provider configuration block.
@@ -143,8 +178,9 @@ func (p *convexProvider) Configure(ctx context.Context, req provider.ConfigureRe
 		return
 	}
 
-	resp.ResourceData = client
-	resp.DataSourceData = client
+	data := &providerData{Management: client, Token: token}
+	resp.ResourceData = data
+	resp.DataSourceData = data
 }
 
 func (p *convexProvider) Resources(_ context.Context) []func() resource.Resource {
@@ -155,6 +191,7 @@ func (p *convexProvider) Resources(_ context.Context) []func() resource.Resource
 		NewPreviewDeployKeyResource,
 		NewCustomDomainResource,
 		NewDefaultEnvironmentVariableResource,
+		NewEnvironmentVariableResource,
 	}
 }
 

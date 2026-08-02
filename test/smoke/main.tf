@@ -82,6 +82,14 @@ resource "convex_preview_deploy_key" "previews" {
   name       = "previews"
 }
 
+# Deployment Platform API rather than the management API. deployment_url is
+# unknown until apply, so this stays offline like everything else here.
+resource "convex_environment_variable" "stripe" {
+  deployment_url = convex_deployment.prod.deployment_url
+  name           = "STRIPE_KEY"
+  value          = "sk_test_placeholder"
+}
+
 resource "convex_custom_domain" "api" {
   deployment_name     = convex_deployment.prod.name
   domain              = "api.example.com"

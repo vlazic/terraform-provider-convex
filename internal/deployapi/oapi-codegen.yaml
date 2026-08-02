@@ -1,0 +1,12 @@
+# Consumed by the go:generate directive in generate.go, which runs with this
+# directory as the working directory -- paths below are relative to it.
+package: deployapi
+output: client.gen.go
+generate:
+  models: true
+  client: true
+output-options:
+  skip-prune: true
+  # Same collision guard as the management client: schema components named
+  # "<Something>Response" would otherwise clash with the generated wrappers.
+  response-type-suffix: HTTPResponse

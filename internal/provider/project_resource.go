@@ -114,22 +114,13 @@ func (r *projectResource) Schema(_ context.Context, _ resource.SchemaRequest, re
 }
 
 func (r *projectResource) Configure(_ context.Context, req resource.ConfigureRequest, resp *resource.ConfigureResponse) {
-	if req.ProviderData == nil {
-		// Provider has not been configured yet; the framework calls this again.
-		return
-	}
-
-	client, ok := req.ProviderData.(*convex.ClientWithResponses)
+	data, ok := providerDataFrom(req.ProviderData, &resp.Diagnostics)
 
 	if !ok {
-		resp.Diagnostics.AddError(
-			"Unexpected resource configure type",
-			fmt.Sprintf("Expected *convex.ClientWithResponses, got %T. This is a bug in the provider.", req.ProviderData),
-		)
 		return
 	}
 
-	r.client = client
+	r.client = data.Management
 }
 
 func (r *projectResource) Create(ctx context.Context, req resource.CreateRequest, resp *resource.CreateResponse) {
