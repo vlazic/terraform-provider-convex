@@ -15,6 +15,7 @@ Early. Two resources and two data sources are implemented:
 | `convex_deploy_key`         | yes    | yes  | no, replace only | yes    | `<deployment_name>/<key_name>` |
 | `convex_preview_deploy_key` | yes    | yes  | no, replace only | yes    | `<project_id>/<key_name>`      |
 | `convex_custom_domain`      | yes    | yes  | no, replace only | yes    | `<deployment_name>/<request_destination>/<domain>` |
+| `convex_default_environment_variable` | yes | yes | value only     | yes    | `<project_id>/<deployment_type>/<name>` |
 
 | Data source         | Lookup keys                                            |
 | ------------------- | ------------------------------------------------------ |
@@ -146,6 +147,28 @@ restricted access. This applies to both `convex_deploy_key` and
   exposed.
 - Note that `convex_deployment.deployment_url` always reports the
   `.convex.cloud` URL, even once a custom domain is in place.
+
+### Notes on `convex_default_environment_variable`
+
+- **Defaults apply only to deployments created afterwards.** Convex uses these
+  values when a new deployment is created; it does not push them to existing
+  deployments and does not keep them in sync. Editing one here has no effect on
+  a running deployment. Declare the variables before the `convex_deployment`
+  that should pick them up — the example uses `depends_on` for exactly that.
+- One resource manages one `(name, deployment_type)` pair, which is how the API
+  keys these variables: writes are `{name, deploymentType, value}` upserts.
+  Spanning several types is a `for_each` over the types.
+- Variables Terraform does not declare are left alone. That is the usual
+  granular-resource tradeoff: composable, but a variable someone adds in the
+  dashboard is invisible to Terraform rather than being flagged as drift.
+- **Creating fails if the variable already exists.** The API only upserts, so
+  it cannot distinguish create from update. Without the check, an apply would
+  silently overwrite a value set elsewhere and then delete it on the next
+  destroy. The error tells you the import command to run instead.
+- `value` is marked sensitive because these commonly hold credentials. It is
+  stored in Terraform state in plain text regardless.
+- The read filters server-side on both name and deployment type, so it never
+  has to page through the full list.
 
 ### Notes on the data sources
 
