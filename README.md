@@ -6,8 +6,14 @@ and the [Convex Management API](https://docs.convex.dev/management-api).
 
 ## Status
 
-Early, and not yet published to the registry. Six resources and two data
-sources are implemented, all with import support.
+Version 0.1.0 — the first release. Six resources and two data sources, all
+with import support.
+
+The surface is complete enough to manage projects, deployments, deploy keys,
+custom domains and default environment variables end to end. It is a 0.x
+release: the API surface may still change, and there is no acceptance test
+suite yet, so behaviour is covered by unit tests and an offline plan rather
+than against a live API.
 
 | Resource                              | Update           |
 | ------------------------------------- | ---------------- |
@@ -187,9 +193,10 @@ make plan       # runs make install, then terraform init + plan
 
 `make destroy` cleans up.
 
-### Publishing
+### Cutting a release
 
-Everything in the repo is release-ready; what remains needs your credentials.
+The steps are order-sensitive: tagging before the signing secrets exist
+produces a failed release run, and re-running a tag is awkward.
 
 1. **Create a GPG signing key** and add the *public* key to your registry
    namespace at registry.terraform.io. The registry verifies that the checksums
@@ -198,14 +205,16 @@ Everything in the repo is release-ready; what remains needs your credentials.
    `PASSPHRASE`.
 3. **Publish the provider** on registry.terraform.io — sign in with GitHub,
    authorize the account, select this repository.
-4. **Tag a release:** `git tag v0.1.0 && git push origin v0.1.0`. The
+4. **Update `CHANGELOG.md`** and bump `VERSION` in the `Makefile` if the local
+   mirror should match.
+5. **Tag and push:** `git tag v0.1.0 && git push origin v0.1.0`. The
    [release workflow](.github/workflows/release.yml) builds every platform with
    GoReleaser, signs the checksums and creates the GitHub release; the registry
    picks it up from the tag.
 
-There is no acceptance test suite yet, so resource behaviour is covered by unit
-tests and an offline plan rather than against a live API. Worth adding before
-tagging.
+Watch the workflow finish before assuming a release landed — a missing or
+mistyped secret fails at the GPG import step, and the registry will simply
+never see a release for that tag.
 
 ## License
 
