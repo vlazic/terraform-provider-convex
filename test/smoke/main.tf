@@ -90,6 +90,21 @@ resource "convex_environment_variable" "stripe" {
   value          = "sk_test_placeholder"
 }
 
+# Deployment Platform API. Exactly one sink block is required; the resource's
+# ConfigValidators enforce that.
+resource "convex_log_stream" "axiom" {
+  deployment_url = convex_deployment.prod.deployment_url
+
+  axiom {
+    api_key      = "xaat-placeholder"
+    dataset_name = "convex"
+    attributes = {
+      env = "smoke"
+    }
+    topics = ["console", "function_execution"]
+  }
+}
+
 resource "convex_custom_domain" "api" {
   deployment_name     = convex_deployment.prod.name
   domain              = "api.example.com"

@@ -192,6 +192,7 @@ func (p *convexProvider) Resources(_ context.Context) []func() resource.Resource
 		NewCustomDomainResource,
 		NewDefaultEnvironmentVariableResource,
 		NewEnvironmentVariableResource,
+		NewLogStreamResource,
 	}
 }
 

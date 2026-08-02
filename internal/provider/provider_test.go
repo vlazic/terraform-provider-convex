@@ -58,6 +58,7 @@ func TestProviderResources(t *testing.T) {
 		"convex_custom_domain",
 		"convex_default_environment_variable",
 		"convex_environment_variable",
+		"convex_log_stream",
 	}
 
 	for _, name := range want {

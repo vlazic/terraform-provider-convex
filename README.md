@@ -6,11 +6,11 @@ and the [Convex Management API](https://docs.convex.dev/management-api).
 
 ## Status
 
-Seven resources and two data sources, all with import support.
+Eight resources and two data sources, all with import support.
 
 The latest release is **0.1.0**, which shipped six of them.
-`convex_environment_variable` is on `master` and not yet released — see
-[CHANGELOG.md](CHANGELOG.md).
+`convex_environment_variable` and `convex_log_stream` are on `master` and not
+yet released — see [CHANGELOG.md](CHANGELOG.md).
 
 The surface is complete enough to manage projects, deployments, deploy keys,
 custom domains and environment variables end to end. Being 0.x, the API
@@ -26,6 +26,7 @@ is covered by unit tests and an offline plan rather than against a live API.
 | `convex_custom_domain`                | no, replace only |
 | `convex_default_environment_variable` | value only       |
 | `convex_environment_variable`         | value only       |
+| `convex_log_stream`                   | yes              |
 
 | Data source         | Lookup keys                                  |
 | ------------------- | -------------------------------------------- |
@@ -85,6 +86,8 @@ front:
 - **Deploy key secrets are stored in Terraform state in plain text.** Convex
   returns them only once, at creation, so no provider can avoid it and import
   cannot recover them. Treat state as a secret.
+- **Log streams need a Convex Pro plan**, and start asynchronously — `status`
+  is `pending` until a later refresh reports `active` or `failed`.
 - **Two kinds of environment variable.** `convex_environment_variable` changes
   a running deployment. `convex_default_environment_variable` only seeds
   deployments created *afterwards* — Convex does not sync it to existing ones.
