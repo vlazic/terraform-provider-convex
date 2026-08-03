@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/srs/terraform-provider-convex/internal/apierr"
 )
 
 // envVarChange mirrors UpdateEnvVarRequest, but without the `omitempty` the
@@ -57,19 +59,27 @@ func GetEnvironmentVariable(ctx context.Context, client *ClientWithResponses, na
 }
 
 // SetEnvironmentVariable upserts a variable on the deployment.
+//
+// Retried on transient failures: Convex raises a 503
+// OptimisticConcurrencyControlFailure when concurrent mutations touch the same
+// data, which Terraform provokes readily by applying independent variables of
+// one deployment in parallel. The upsert is idempotent, so retrying is safe.
 func SetEnvironmentVariable(ctx context.Context, client *ClientWithResponses, name, value string) error {
-	updated, err := client.UpdateEnvironmentVariablesWithResponse(ctx, UpdateEnvVarsRequest{
-		Changes: []UpdateEnvVarRequest{{Name: name, Value: &value}},
-	})
-	if err != nil {
-		return err
-	}
+	return apierr.Retry(ctx, maxAttempts, baseDelay, func() error {
+		updated, err := client.UpdateEnvironmentVariablesWithResponse(ctx, UpdateEnvVarsRequest{
+			Changes: []UpdateEnvVarRequest{{Name: name, Value: &value}},
+		})
+		if err != nil {
+			return err
+		}
 
-	return CheckResponse(updated)
+		return CheckResponse(updated)
+	})
 }
 
 // UnsetEnvironmentVariable removes a variable from the deployment. Removing
-// one that does not exist is a no-op on the API side.
+// one that does not exist is a no-op on the API side, so this is idempotent
+// and retried on transient failures -- see SetEnvironmentVariable.
 //
 // Named Unset rather than Delete because the generated client already has a
 // DeleteEnvironmentVariable audit-log constant.
@@ -85,11 +95,13 @@ func UnsetEnvironmentVariable(ctx context.Context, client *ClientWithResponses, 
 		return fmt.Errorf("encoding environment variable deletion: %w", err)
 	}
 
-	deleted, err := client.UpdateEnvironmentVariablesWithBodyWithResponse(
-		ctx, "application/json", bytes.NewReader(payload))
-	if err != nil {
-		return err
-	}
+	return apierr.Retry(ctx, maxAttempts, baseDelay, func() error {
+		deleted, err := client.UpdateEnvironmentVariablesWithBodyWithResponse(
+			ctx, "application/json", bytes.NewReader(payload))
+		if err != nil {
+			return err
+		}
 
-	return CheckResponse(deleted)
+		return CheckResponse(deleted)
+	})
 }

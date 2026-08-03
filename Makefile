@@ -3,10 +3,15 @@ BINARY := terraform-provider-convex
 # Version used when installing into the local plugin mirror. Terraform needs a
 # concrete version there, so this is what `version =` constraints resolve
 # against locally.
-VERSION ?= 0.1.0
+VERSION ?= 0.2.0
 
 # The "implied local mirror" Terraform searches without any CLI configuration.
-PLUGIN_HOST      := registry.terraform.io
+#
+# Deliberately installed under the host "local" rather than
+# registry.terraform.io: "local/srs/convex" cannot resolve to the public
+# registry, so a config pointing at it can never silently fall back to the
+# published build. The released provider keeps its real address, srs/convex.
+PLUGIN_HOST      := local
 PLUGIN_NAMESPACE := srs
 PLUGIN_TYPE      := convex
 PLATFORM         := $(shell go env GOOS)_$(shell go env GOARCH)
@@ -45,7 +50,7 @@ build:
 # with no CLI configuration at all -- no dev_overrides, no -plugin-dir.
 # Configs then pin it the ordinary way:
 #
-#     convex = { source = "srs/convex", version = "0.1.0" }
+#     convex = { source = "local/srs/convex", version = "0.2.0" }
 #
 # Unlike dev_overrides this behaves like a published provider: init works,
 # version constraints apply and a .terraform.lock.hcl is written. The tradeoff

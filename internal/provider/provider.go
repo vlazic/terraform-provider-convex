@@ -88,8 +88,10 @@ func (p *convexProvider) Metadata(_ context.Context, _ provider.MetadataRequest,
 
 func (p *convexProvider) Schema(_ context.Context, _ provider.SchemaRequest, resp *provider.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages resources on the [Convex](https://convex.dev) platform through the " +
-			"[Management API](https://docs.convex.dev/management-api).",
+		MarkdownDescription: "Manages [Convex](https://convex.dev) projects, deployments and their " +
+			"configuration, through the [Management API](https://docs.convex.dev/management-api) and the " +
+			"[Deployment Platform API](https://docs.convex.dev/deployment-platform-api). One token " +
+			"authenticates both.",
 		Attributes: map[string]schema.Attribute{
 			"endpoint": schema.StringAttribute{
 				Optional: true,

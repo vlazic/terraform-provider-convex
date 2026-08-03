@@ -2,7 +2,7 @@ terraform {
   required_providers {
     convex = {
       source  = "srs/convex"
-      version = "0.1.0"
+      version = "0.2.0"
     }
   }
 }

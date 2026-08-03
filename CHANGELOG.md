@@ -10,6 +10,10 @@ caveat that minor releases may still break.
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.2.0 (2026-08-03)
+
 ### Added
 
 - `convex_log_stream` — streams a deployment's log events to Axiom, Datadog,
@@ -25,8 +29,18 @@ caveat that minor releases may still break.
   deployments created afterwards and has no effect on existing ones. Takes a
   `deployment_url`, since regional deployments cannot be addressed by name.
 
+### Fixed
+
+- Idempotent writes on the Deployment Platform API are retried on transient
+  failures. Convex is transactional, so applying several environment variables
+  of one deployment in parallel could fail with a 503
+  `OptimisticConcurrencyControlFailure`; this is now retried rather than
+  surfaced. Log stream updates and deletes are covered too. Creates are
+  deliberately excluded, since a failed create does not prove nothing was made.
+
 ### Changed
 
+- Retry handling shared by both clients moved to `internal/apierr`.
 - The provider now wraps two Convex APIs. `internal/convex` covers the
   management API; the new `internal/deployapi` covers the Deployment Platform
   API, which is addressed at each deployment's own URL and takes a `Convex `

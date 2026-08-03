@@ -1,0 +1,90 @@
+---
+page_title: "{{ .RenderedProviderName }} Provider"
+subcategory: ""
+description: |-
+{{ .Description | plainmarkdown | trimspace | prefixlines "  " }}
+---
+
+# {{ .RenderedProviderName }} Provider
+
+Manages [Convex](https://convex.dev) projects, deployments and their
+configuration as code.
+
+Use it to provision projects and cloud deployments, issue deploy keys, attach
+custom domains, set environment variables, and stream logs to an external
+destination.
+
+## Example Usage
+
+{{ tffile "examples/provider/provider.tf" }}
+
+## Authentication
+
+The provider authenticates with a single bearer token, which may be any of:
+
+- a **team access token**, created in the Convex dashboard under team settings
+- a **personal access token**, created under user settings
+- an **OAuth token**, for integrations acting on behalf of another team
+
+Prefer the `CONVEX_ACCESS_TOKEN` environment variable so the token stays out of
+configuration files:
+
+```shell
+export CONVEX_ACCESS_TOKEN="..."
+```
+
+Team settings is also where you find the numeric team ID that
+`convex_project.team_id` expects.
+
+## Two APIs, one token
+
+Convex exposes two management APIs, and the provider uses both with the same
+token. This is worth knowing because it explains how resources are addressed.
+
+| Resources | API | Addressed by |
+| --- | --- | --- |
+| `convex_project`, `convex_deployment`, `convex_deploy_key`, `convex_preview_deploy_key`, `convex_custom_domain`, `convex_default_environment_variable` | [Management API](https://docs.convex.dev/management-api) | team, project or deployment identifier |
+| `convex_environment_variable`, `convex_log_stream` | [Deployment Platform API](https://docs.convex.dev/deployment-platform-api) | the deployment's own URL |
+
+Resources in the second group take a `deployment_url` rather than a name,
+because each deployment is served from its own host. Always feed them
+`convex_deployment.<name>.deployment_url`: a regional deployment looks like
+`https://calm-cow-456.eu-west-1.convex.cloud`, so the URL cannot be
+reconstructed from the deployment name.
+
+## Things worth knowing
+
+**Secrets end up in Terraform state.** Convex returns a deploy key exactly once,
+at creation, and never again — so `convex_deploy_key` and
+`convex_preview_deploy_key` must persist it, and `terraform import` cannot
+recover it. Log stream credentials and environment variable values are likewise
+stored. Treat the state file as a secret and prefer a remote backend with
+encryption at rest.
+
+**Two kinds of environment variable, and they can collide.**
+`convex_environment_variable` changes a *running* deployment.
+`convex_default_environment_variable` only seeds deployments created
+*afterwards* — Convex does not sync it to existing ones. If a default has
+already seeded a name onto a deployment, creating the same name live fails
+rather than overwriting it; import it instead.
+
+**Some operations are asynchronous.** Custom domain verification and log stream
+startup both complete after the apply returns, so `verified` and `status` settle
+on a later refresh rather than immediately.
+
+**Convex is transactional.** Applying several resources against one deployment
+in parallel can return a `503 OptimisticConcurrencyControlFailure`. Idempotent
+writes are retried automatically; if it persists, `terraform apply
+-parallelism=1` serialises them.
+
+**Log streams require a Convex Pro plan.**
+
+## Getting started
+
+1. Create a team access token in the Convex dashboard, under team settings, and
+   note your numeric team ID.
+2. Export it as `CONVEX_ACCESS_TOKEN`.
+3. Declare a `convex_project` and a `convex_deployment`, then reference that
+   deployment's `deployment_url` from anything in the second table above.
+
+{{ .SchemaMarkdown | trimspace }}

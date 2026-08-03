@@ -6,7 +6,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
+
+// noBackoff collapses the retry delay so retry tests stay fast.
+func noBackoff(t *testing.T) {
+	t.Helper()
+
+	previous := baseDelay
+	baseDelay = time.Microsecond
+	t.Cleanup(func() { baseDelay = previous })
+}
 
 func TestBaseURL(t *testing.T) {
 	tests := []struct {
@@ -197,5 +207,68 @@ func TestCheckResponseSurfacesAPIErrors(t *testing.T) {
 
 	if got, want := err.Error(), "HTTP 401: Unauthorized: bad token"; got != want {
 		t.Errorf("error = %q, want %q", got, want)
+	}
+}
+
+// Reproduces a real failure: deleting several variables on one deployment in
+// parallel makes Convex return 503 OptimisticConcurrencyControlFailure, since
+// it is transactional. The write is idempotent, so it must be retried rather
+// than surfaced.
+func TestUnsetEnvironmentVariableRetriesOCCFailure(t *testing.T) {
+	noBackoff(t)
+
+	calls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+
+		if calls < 3 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"code":"OptimisticConcurrencyControlFailure",` +
+				`"message":"Data read or written in this mutation changed while it was being run."}`))
+
+			return
+		}
+
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	client, err := NewAuthenticated(server.URL, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := UnsetEnvironmentVariable(t.Context(), client, "FEATURE_FLAGS"); err != nil {
+		t.Fatalf("UnsetEnvironmentVariable() error = %v, want it to survive the OCC failures", err)
+	}
+
+	if calls != 3 {
+		t.Errorf("server saw %d calls, want 3", calls)
+	}
+}
+
+// A rejection on the merits must not be retried.
+func TestSetEnvironmentVariableDoesNotRetryBadRequest(t *testing.T) {
+	calls := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"code":"InvalidName","message":"bad name"}`))
+	}))
+	defer server.Close()
+
+	client, err := NewAuthenticated(server.URL, "tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := SetEnvironmentVariable(t.Context(), client, "bad name", "x"); err == nil {
+		t.Fatal("SetEnvironmentVariable() = nil error, want the 400")
+	}
+
+	if calls != 1 {
+		t.Errorf("server saw %d calls, want 1 -- a 400 must not be retried", calls)
 	}
 }

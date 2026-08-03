@@ -20,8 +20,9 @@ terraform {
 
   required_providers {
     convex = {
-      source  = "srs/convex"
-      version = "0.1.0"
+      # No version constraint: the smoke test loads the provider through
+      # dev_overrides, which ignores them.
+      source = "srs/convex"
     }
   }
 }

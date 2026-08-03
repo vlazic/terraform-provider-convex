@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"time"
+
+	"github.com/srs/terraform-provider-convex/internal/apierr"
 )
 
 // envVarChange mirrors DefaultEnvironmentVariableChangeArgs, but without the
@@ -29,10 +31,10 @@ type envVarChanges struct {
 // been observed returning a 500 from update_default_environment_variables,
 // notably when Terraform writes several variables of the same project
 // concurrently.
-const envVarMaxAttempts = 4
-
-// Overridden in tests so they do not actually sleep.
-var envVarBaseDelay = 500 * time.Millisecond
+const (
+	envVarMaxAttempts = 4
+	envVarBaseDelay   = 500 * time.Millisecond
+)
 
 // SetDefaultEnvironmentVariable upserts a default environment variable.
 func SetDefaultEnvironmentVariable(
@@ -43,7 +45,7 @@ func SetDefaultEnvironmentVariable(
 	deploymentType DeploymentType,
 	value string,
 ) error {
-	return retryTransient(ctx, func() error {
+	return apierr.Retry(ctx, envVarMaxAttempts, envVarBaseDelay, func() error {
 		updated, err := client.UpdateDefaultEnvironmentVariablesWithResponse(ctx, projectID,
 			UpdateDefaultEnvironmentVariablesArgs{
 				Changes: []DefaultEnvironmentVariableChangeArgs{{
@@ -87,7 +89,7 @@ func DeleteDefaultEnvironmentVariable(
 		return fmt.Errorf("encoding environment variable deletion: %w", err)
 	}
 
-	return retryTransient(ctx, func() error {
+	return apierr.Retry(ctx, envVarMaxAttempts, envVarBaseDelay, func() error {
 		deleted, err := client.UpdateDefaultEnvironmentVariablesWithBodyWithResponse(
 			ctx, projectID, "application/json", bytes.NewReader(payload))
 
@@ -97,36 +99,4 @@ func DeleteDefaultEnvironmentVariable(
 
 		return CheckResponse(deleted)
 	})
-}
-
-// retryTransient runs fn, retrying with linear backoff while the API reports a
-// transient failure.
-//
-// This is applied only to the default environment variable writes, which are
-// idempotent: setting the same value twice, or deleting something already
-// gone, changes nothing. Retrying is deliberately not wired into the HTTP
-// client globally, because a 500 from a create endpoint may well mean the
-// resource was created, and a blind retry would duplicate it.
-func retryTransient(ctx context.Context, fn func() error) error {
-	var err error
-
-	for attempt := 1; attempt <= envVarMaxAttempts; attempt++ {
-		err = fn()
-
-		if err == nil || !IsTransient(err) {
-			return err
-		}
-
-		if attempt == envVarMaxAttempts {
-			break
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(time.Duration(attempt) * envVarBaseDelay):
-		}
-	}
-
-	return fmt.Errorf("giving up after %d attempts: %w", envVarMaxAttempts, err)
 }

@@ -6,12 +6,21 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/srs/terraform-provider-convex/internal/apierr"
 )
 
 // apiPath is appended to a deployment's URL to reach its management endpoints.
 const apiPath = "/api/v1"
+
+// Retry settings for idempotent mutations on this API. Convex is transactional,
+// so concurrent writes to one deployment surface as a 503
+// OptimisticConcurrencyControlFailure that succeeds on a retry.
+const maxAttempts = 5
+
+// A var rather than a const so tests can collapse the backoff.
+var baseDelay = 400 * time.Millisecond
 
 // APIError is a non-2xx response from the Deployment Platform API.
 type APIError = apierr.APIError

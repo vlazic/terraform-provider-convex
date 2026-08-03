@@ -6,11 +6,8 @@ and the [Convex Management API](https://docs.convex.dev/management-api).
 
 ## Status
 
-Eight resources and two data sources, all with import support.
-
-The latest release is **0.1.0**, which shipped six of them.
-`convex_environment_variable` and `convex_log_stream` are on `master` and not
-yet released — see [CHANGELOG.md](CHANGELOG.md).
+Version **0.2.0**. Eight resources and two data sources, all with import
+support.
 
 The surface is complete enough to manage projects, deployments, deploy keys,
 custom domains and environment variables end to end. Being 0.x, the API
@@ -40,7 +37,7 @@ terraform {
   required_providers {
     convex = {
       source  = "srs/convex"
-      version = "0.1.0"
+      version = "0.2.0"
     }
   }
 }
@@ -80,6 +77,11 @@ Per-resource reference lives in [`docs/`](docs/), generated from the provider
 schemas — that is also what the Terraform Registry renders. Runnable
 configuration is in [`examples/`](examples/).
 
+The registry's overview page comes from [`templates/index.md.tmpl`](templates/index.md.tmpl)
+rather than from a schema description, so prose for that page belongs there.
+Everything else is generated from schemas plus `examples/`; `make docs` rebuilds
+the tree and CI fails if it is stale.
+
 Each resource's page documents its own constraints. A few are worth knowing up
 front:
 
@@ -88,6 +90,12 @@ front:
   cannot recover them. Treat state as a secret.
 - **Log streams need a Convex Pro plan**, and start asynchronously — `status`
   is `pending` until a later refresh reports `active` or `failed`.
+- **Convex is transactional, so parallel writes to one deployment conflict.**
+  Several environment variables applied at once can return a 503
+  `OptimisticConcurrencyControlFailure`. Idempotent writes are retried
+  automatically; if it still bites, `terraform apply -parallelism=1` serialises
+  them. Creates are deliberately not retried, since a failure does not prove
+  nothing was made.
 - **Two kinds of environment variable.** `convex_environment_variable` changes
   a running deployment. `convex_default_environment_variable` only seeds
   deployments created *afterwards* — Convex does not sync it to existing ones.
@@ -168,9 +176,16 @@ The source address is `srs/convex`, which the registry maps to
 resolves only to a local build, via one of two mechanisms.
 
 **Local plugin mirror.** `make install` copies the binary into Terraform's
-implied local mirror. Nothing else is needed — no CLI configuration, no flags —
-and `terraform init` resolves it offline and writes a real lock file, so the
+implied local mirror, under the deliberately unresolvable address
+**`local/srs/convex`**. Nothing else is needed — no CLI configuration, no flags
+— and `terraform init` resolves it offline and writes a real lock file, so the
 workflow matches a published provider.
+
+The `local/` host matters: a config pinning `local/srs/convex` can only ever
+load your build. Pinning the real `srs/convex` risks silently falling back to
+the published release from the registry, which is exactly the mistake you would
+not notice. The released binary keeps its real address; Terraform does not
+cross-check the two, so the same build serves both.
 
 Two things bite during development. The mirror holds a *copy*, so `make build`
 is not enough: you must `make install`, or Terraform silently keeps running the
@@ -207,10 +222,15 @@ resources, so it needs a token and a team ID.
 cd ../convex-tf-sandbox
 cp terraform.tfvars.example terraform.tfvars   # then fill it in
 export CONVEX_ACCESS_TOKEN=...
-make plan       # runs make install, then terraform init + plan
+make plan       # rebuilds the provider, then plans
 ```
 
-`make destroy` cleans up.
+It loads the provider through `dev_overrides` under the address
+`local/srs/convex`, from a `dev.tfrc` its Makefile generates. There is no plugin
+mirror copy, no lock file and no `terraform init`, so a rebuild can never leave
+a stale checksum behind — which the mirror did on every provider change. Bare
+`terraform` commands work there too, as long as `TF_CLI_CONFIG_FILE` points at
+that `dev.tfrc`. `make destroy` cleans up.
 
 ### Cutting a release
 
@@ -226,7 +246,7 @@ produces a failed release run, and re-running a tag is awkward.
    authorize the account, select this repository.
 4. **Update `CHANGELOG.md`** and bump `VERSION` in the `Makefile` if the local
    mirror should match.
-5. **Tag and push:** `git tag v0.1.0 && git push origin v0.1.0`. The
+5. **Tag and push:** `git tag v0.2.0 && git push origin v0.2.0`. The
    [release workflow](.github/workflows/release.yml) builds every platform with
    GoReleaser, signs the checksums and creates the GitHub release; the registry
    picks it up from the tag.

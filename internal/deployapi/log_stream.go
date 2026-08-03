@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+
+	"github.com/srs/terraform-provider-convex/internal/apierr"
 )
 
 // LogStreamType discriminates the sink a log stream writes to. The API carries
@@ -183,6 +185,9 @@ func decodeStatus(status LogStreamStatus) (LogStreamState, error) {
 // CreateLogStream creates a log stream from a payload that already carries its
 // `logStreamType`.
 //
+// Deliberately not retried: a failed create does not prove nothing was made,
+// so retrying could leave a duplicate stream behind.
+//
 // The body is passed pre-encoded rather than through the generated union type,
 // whose variants are positional and would silently rebind if the spec's
 // `oneOf` order changed.
@@ -244,20 +249,25 @@ func UpdateLogStream(ctx context.Context, client *ClientWithResponses, id string
 		return fmt.Errorf("encoding log stream update: %w", err)
 	}
 
-	updated, err := client.UpdateLogStreamWithBodyWithResponse(ctx, id, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
+	return apierr.Retry(ctx, maxAttempts, baseDelay, func() error {
+		updated, err := client.UpdateLogStreamWithBodyWithResponse(
+			ctx, id, "application/json", bytes.NewReader(body))
+		if err != nil {
+			return err
+		}
 
-	return CheckResponse(updated)
+		return CheckResponse(updated)
+	})
 }
 
 // DeleteLogStream removes a log stream.
 func DeleteLogStream(ctx context.Context, client *ClientWithResponses, id string) error {
-	deleted, err := client.DeleteLogStreamWithResponse(ctx, id)
-	if err != nil {
-		return err
-	}
+	return apierr.Retry(ctx, maxAttempts, baseDelay, func() error {
+		deleted, err := client.DeleteLogStreamWithResponse(ctx, id)
+		if err != nil {
+			return err
+		}
 
-	return CheckResponse(deleted)
+		return CheckResponse(deleted)
+	})
 }

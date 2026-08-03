@@ -1,4 +1,4 @@
-package convex
+package apierr
 
 import (
 	"context"
@@ -8,13 +8,11 @@ import (
 	"time"
 )
 
-// noSleep collapses the retry backoff so these tests stay fast.
-func noSleep(t *testing.T) {
-	t.Helper()
-	previous := envVarBaseDelay
-	envVarBaseDelay = time.Microsecond
-	t.Cleanup(func() { envVarBaseDelay = previous })
-}
+// Tests pass an explicit tiny delay so they never actually sleep.
+const (
+	testAttempts = 4
+	testDelay    = time.Microsecond
+)
 
 func TestIsTransient(t *testing.T) {
 	tests := []struct {
@@ -43,10 +41,8 @@ func TestIsTransient(t *testing.T) {
 }
 
 func TestRetryTransientRetriesUntilSuccess(t *testing.T) {
-	noSleep(t)
-
 	calls := 0
-	err := retryTransient(t.Context(), func() error {
+	err := Retry(t.Context(), testAttempts, testDelay, func() error {
 		calls++
 
 		if calls < 3 {
@@ -57,7 +53,7 @@ func TestRetryTransientRetriesUntilSuccess(t *testing.T) {
 	})
 
 	if err != nil {
-		t.Fatalf("retryTransient() error = %v, want nil", err)
+		t.Fatalf("Retry() error = %v, want nil", err)
 	}
 
 	if calls != 3 {
@@ -66,16 +62,14 @@ func TestRetryTransientRetriesUntilSuccess(t *testing.T) {
 }
 
 func TestRetryTransientDoesNotRetryPermanentErrors(t *testing.T) {
-	noSleep(t)
-
 	calls := 0
-	err := retryTransient(t.Context(), func() error {
+	err := Retry(t.Context(), testAttempts, testDelay, func() error {
 		calls++
 		return &APIError{StatusCode: http.StatusBadRequest, Message: "bad name"}
 	})
 
 	if err == nil {
-		t.Fatal("retryTransient() = nil, want the original error")
+		t.Fatal("Retry() = nil, want the original error")
 	}
 
 	if calls != 1 {
@@ -91,20 +85,18 @@ func TestRetryTransientDoesNotRetryPermanentErrors(t *testing.T) {
 }
 
 func TestRetryTransientGivesUp(t *testing.T) {
-	noSleep(t)
-
 	calls := 0
-	err := retryTransient(t.Context(), func() error {
+	err := Retry(t.Context(), testAttempts, testDelay, func() error {
 		calls++
 		return &APIError{StatusCode: http.StatusInternalServerError}
 	})
 
 	if err == nil {
-		t.Fatal("retryTransient() = nil, want an error")
+		t.Fatal("Retry() = nil, want an error")
 	}
 
-	if calls != envVarMaxAttempts {
-		t.Errorf("fn was called %d times, want %d", calls, envVarMaxAttempts)
+	if calls != testAttempts {
+		t.Errorf("fn was called %d times, want %d", calls, testAttempts)
 	}
 
 	// Wrapping must survive, so 404-style checks still work after exhaustion.
@@ -119,7 +111,7 @@ func TestRetryTransientHonoursContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 
 	calls := 0
-	err := retryTransient(ctx, func() error {
+	err := Retry(ctx, testAttempts, testDelay, func() error {
 		calls++
 		cancel() // cancel during the first backoff
 		return &APIError{StatusCode: http.StatusInternalServerError}
