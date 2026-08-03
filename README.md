@@ -1,8 +1,14 @@
 # terraform-provider-convex
 
 A Terraform provider for the [Convex](https://convex.dev) platform, built on
-[terraform-plugin-framework](https://github.com/hashicorp/terraform-plugin-framework)
-and the [Convex Management API](https://docs.convex.dev/management-api).
+[terraform-plugin-framework](https://github.com/hashicorp/terraform-plugin-framework).
+
+It wraps both of Convex's management APIs — the
+[Management API](https://docs.convex.dev/management-api) for provisioning
+projects and deployments, and the
+[Deployment Platform API](https://docs.convex.dev/deployment-platform-api) for
+configuring a deployment that already exists. One token authenticates both, so
+the provider takes a single `token`.
 
 ## Status
 
@@ -10,20 +16,27 @@ Version **0.2.0**. Eight resources and two data sources, all with import
 support.
 
 The surface is complete enough to manage projects, deployments, deploy keys,
-custom domains, environment variables and log streams end to end. Being 0.x, the API
-surface may still change, and there is no acceptance test suite yet — behaviour
-is covered by unit tests and an offline plan rather than against a live API.
+custom domains, environment variables and log streams end to end. Being 0.x,
+the API surface may still change, and there is no acceptance test suite yet —
+behaviour is covered by unit tests and an offline plan rather than against a
+live API.
 
-| Resource                              | Update           |
-| ------------------------------------- | ---------------- |
-| `convex_project`                      | yes              |
-| `convex_deployment`                   | yes              |
-| `convex_deploy_key`                   | no, replace only |
-| `convex_preview_deploy_key`           | no, replace only |
-| `convex_custom_domain`                | no, replace only |
-| `convex_default_environment_variable` | value only       |
-| `convex_environment_variable`         | value only       |
-| `convex_log_stream`                   | yes              |
+| Resource                              | Update           | API        |
+| ------------------------------------- | ---------------- | ---------- |
+| `convex_project`                      | yes              | Management |
+| `convex_deployment`                   | yes              | Management |
+| `convex_deploy_key`                   | no, replace only | Management |
+| `convex_preview_deploy_key`           | no, replace only | Management |
+| `convex_custom_domain`                | no, replace only | Management |
+| `convex_default_environment_variable` | value only       | Management |
+| `convex_environment_variable`         | value only       | Deployment |
+| `convex_log_stream`                   | yes              | Deployment |
+
+Resources on the Deployment Platform API take a `deployment_url` rather than a
+name, because each deployment is served from its own host. Pass
+`convex_deployment.<name>.deployment_url`: a regional deployment looks like
+`https://calm-cow-456.eu-west-1.convex.cloud`, so the URL cannot be built from
+the deployment name.
 
 | Data source         | Lookup keys                                  |
 | ------------------- | -------------------------------------------- |
@@ -70,6 +83,10 @@ find the numeric team ID that `convex_project.team_id` expects.
 | ---------- | --------------------- | --------------------------- |
 | `token`    | `CONVEX_ACCESS_TOKEN` | none, required              |
 | `endpoint` | `CONVEX_ENDPOINT`     | `https://api.convex.dev/v1` |
+
+`endpoint` overrides the Management API base URL only. Deployment Platform API
+calls go to whatever `deployment_url` the resource was given, so they are not
+affected by it.
 
 ## Documentation
 
