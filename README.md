@@ -10,7 +10,7 @@ Version **0.2.0**. Eight resources and two data sources, all with import
 support.
 
 The surface is complete enough to manage projects, deployments, deploy keys,
-custom domains and environment variables end to end. Being 0.x, the API
+custom domains, environment variables and log streams end to end. Being 0.x, the API
 surface may still change, and there is no acceptance test suite yet — behaviour
 is covered by unit tests and an offline plan rather than against a live API.
 
