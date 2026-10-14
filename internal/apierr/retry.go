@@ -35,6 +35,13 @@ func Retry(ctx context.Context, attempts int, baseDelay time.Duration, fn func()
 			break
 		}
 
+		// Checked first: when the context is done and the delay has also
+		// elapsed, select picks either case at random, and a cancelled context
+		// could still buy another attempt.
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return ctxErr
+		}
+
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
