@@ -3,10 +3,9 @@ package provider
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hashicorp/terraform-plugin-framework/types"
 
@@ -175,6 +174,13 @@ func TestDeployKeyActionsWellFormed(t *testing.T) {
 	}
 }
 
+// UUID-shaped suffixes, as Convex appends them.
+const (
+	uuidA = "cbd71ace-cdac-417a-b967-78b318339e2e"
+	uuidB = "0b0e7c1e-1111-4222-8333-944455556666"
+	uuidC = "7f3a2b10-aaaa-4bbb-8ccc-0123456789ab"
+)
+
 func TestDeployKeyNameMatches(t *testing.T) {
 	tests := []struct {
 		listed, configured string
@@ -182,28 +188,29 @@ func TestDeployKeyNameMatches(t *testing.T) {
 	}{
 		// A key made before Convex started suffixing names keeps its own.
 		{"ci", "ci", true},
-		{"github-actions (cbd71ace-cdac-417a-b967-78b318339e2e)", "github-actions", true},
-		// The suffix content is not checked for UUID shape, in case Convex
-		// changes what it appends.
-		{"ci (x)", "ci", true},
+		{"github-actions (" + uuidA + ")", "github-actions", true},
+		// Only a UUID-shaped suffix is Convex's: the same rule
+		// deployKeyBaseName strips by.
+		{"ci (old)", "ci", false},
+		{"ci (x)", "ci", false},
 		// A different key whose name merely starts with the configured one.
-		{"ci-other (x)", "ci", false},
+		{"ci-other (" + uuidA + ")", "ci", false},
 		{"ci-other", "ci", false},
-		{"cix (x)", "ci", false},
+		{"cix (" + uuidA + ")", "ci", false},
 		// A key created as "ci (staging)", not as "ci".
-		{"ci (staging) (x)", "ci", false},
-		// But it does belong to a key configured as "ci (staging)".
-		{"ci (staging) (x)", "ci (staging)", true},
+		{"ci (staging) (" + uuidA + ")", "ci", false},
+		{"ci (staging) (" + uuidA + ")", "ci (staging)", true},
 		// Near misses on the suffix itself.
 		{"ci ()", "ci", false},
-		{"ci (x", "ci", false},
-		{"ci (x) ", "ci", false},
-		{"ci(x)", "ci", false},
-		{"ci  (x)", "ci", false},
-		{"CI (x)", "ci", false},
+		{"ci (" + uuidA, "ci", false},
+		{"ci (" + uuidA + ") ", "ci", false},
+		{"ci(" + uuidA + ")", "ci", false},
+		{"ci  (" + uuidA + ")", "ci", false},
+		{"ci (" + uuidA[:35] + ")", "ci", false},
+		{"CI (" + uuidA + ")", "ci", false},
 		// The relation is not symmetric: a short listed name does not match a
 		// configured full name.
-		{"ci", "ci (x)", false},
+		{"ci", "ci (" + uuidA + ")", false},
 	}
 
 	for _, tt := range tests {
@@ -215,12 +222,14 @@ func TestDeployKeyNameMatches(t *testing.T) {
 
 func TestDeployKeyBaseName(t *testing.T) {
 	tests := map[string]string{
-		"github-actions (cbd71ace-cdac-417a-b967-78b318339e2e)": "github-actions",
-		"ci (staging) (cbd71ace-cdac-417a-b967-78b318339e2e)":   "ci (staging)",
+		"github-actions (" + uuidA + ")": "github-actions",
+		"ci (staging) (" + uuidA + ")":   "ci (staging)",
 		// Only a UUID-shaped suffix is Convex's; anything else is the user's.
-		"deploy (prod)": "deploy (prod)",
-		"ci":            "ci",
-		"ci (cbd71ace-cdac-417a-b967-78b318339e2e) trailing": "ci (cbd71ace-cdac-417a-b967-78b318339e2e) trailing",
+		"deploy (prod)":                      "deploy (prod)",
+		"ci":                                 "ci",
+		"ci (" + uuidA + ") trailing":        "ci (" + uuidA + ") trailing",
+		"(" + uuidA + ")":                    "(" + uuidA + ")",
+		"ci (" + uuidA + ") (" + uuidB + ")": "ci (" + uuidA + ")",
 	}
 
 	for in, want := range tests {
@@ -232,8 +241,8 @@ func TestDeployKeyBaseName(t *testing.T) {
 
 func TestFindDeployKeyByNameSuffixed(t *testing.T) {
 	keys := []convex.PlatformDeployKeyResponse{
-		{Id: 1, Name: "ci-other (a)"},
-		{Id: 2, Name: "ci (b)"},
+		{Id: 1, Name: "ci-other (" + uuidA + ")"},
+		{Id: 2, Name: "ci (" + uuidB + ")"},
 	}
 
 	found, err := findDeployKeyByName(keys, "ci")
@@ -249,9 +258,9 @@ func TestFindDeployKeyByNameSuffixed(t *testing.T) {
 
 func TestFindDeployKeyByNameAmbiguous(t *testing.T) {
 	keys := []convex.PlatformDeployKeyResponse{
-		{Id: 11, Name: "ci (a)"},
-		{Id: 12, Name: "staging (b)"},
-		{Id: 13, Name: "ci (c)"},
+		{Id: 11, Name: "ci (" + uuidA + ")"},
+		{Id: 12, Name: "staging (" + uuidB + ")"},
+		{Id: 13, Name: "ci (" + uuidC + ")"},
 	}
 
 	_, err := findDeployKeyByName(keys, "ci")
@@ -261,7 +270,7 @@ func TestFindDeployKeyByNameAmbiguous(t *testing.T) {
 	}
 
 	// The message is what tells the user which keys to import or delete.
-	for _, want := range []string{"id 11", "id 13", `"ci (a)"`} {
+	for _, want := range []string{"id 11", "id 13", uuidA} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not mention %s", err, want)
 		}
@@ -274,13 +283,21 @@ func TestFindDeployKeyByNameAmbiguous(t *testing.T) {
 
 func TestResolveDeployKey(t *testing.T) {
 	keys := []convex.PlatformDeployKeyResponse{
-		{Id: 1, Name: "ci (a)"},
-		{Id: 2, Name: "ci (b)"},
-		{Id: 3, Name: "staging (c)"},
+		{Id: 1, Name: "ci (" + uuidA + ")"},
+		{Id: 2, Name: "ci (" + uuidB + ")"},
+		{Id: 3, Name: "staging (" + uuidC + ")"},
+		// A legacy key with no suffix, beside suffixed siblings.
+		{Id: 4, Name: "ci"},
+	}
+
+	byName := func(name string) deployKeyRef {
+		return deployKeyRef{ID: types.Int64Null(), UniqueName: types.StringNull(), Name: name}
 	}
 
 	// A known id wins, even though the name alone is ambiguous here.
-	found, err := resolveDeployKey(keys, types.Int64Value(2), "ci")
+	ref := byName("ci")
+	ref.ID = types.Int64Value(2)
+	found, err := resolveDeployKey(keys, ref)
 
 	if err != nil || found.Id != 2 {
 		t.Fatalf("resolve by id = %v, %v; want Id 2", found, err)
@@ -288,54 +305,68 @@ func TestResolveDeployKey(t *testing.T) {
 
 	// A known id that is gone means the key was deleted, even if another key
 	// still matches the name: that other key is not the one state managed.
-	_, err = resolveDeployKey(keys, types.Int64Value(99), "staging")
+	ref = byName("staging")
+	ref.ID = types.Int64Value(99)
 
-	if !errors.Is(err, errDeployKeyNotFound) {
+	if _, err = resolveDeployKey(keys, ref); !errors.Is(err, errDeployKeyNotFound) {
 		t.Errorf("resolve by missing id: error = %v, want errDeployKeyNotFound", err)
 	}
 
 	// No id (import, or v0.2.0 state): fall back to the name.
 	for _, id := range []types.Int64{types.Int64Null(), types.Int64Unknown()} {
-		found, err = resolveDeployKey(keys, id, "staging")
+		ref = byName("staging")
+		ref.ID = id
+		found, err = resolveDeployKey(keys, ref)
 
 		if err != nil || found.Id != 3 {
 			t.Errorf("resolve by name with id %v = %v, %v; want Id 3", id, found, err)
 		}
 	}
 
-	_, err = resolveDeployKey(keys, types.Int64Null(), "ci")
-
-	if !errors.Is(err, errDeployKeyAmbiguous) {
+	if _, err = resolveDeployKey(keys, byName("ci")); !errors.Is(err, errDeployKeyAmbiguous) {
 		t.Errorf("resolve ambiguous name: error = %v, want errDeployKeyAmbiguous", err)
 	}
 
-	_, err = resolveDeployKey(keys, types.Int64Null(), "absent")
-
-	if !errors.Is(err, errDeployKeyNotFound) {
+	if _, err = resolveDeployKey(keys, byName("absent")); !errors.Is(err, errDeployKeyNotFound) {
 		t.Errorf("resolve absent name: error = %v, want errDeployKeyNotFound", err)
 	}
 
-	// An imported full listed name matches exactly that key.
-	found, err = resolveDeployKey(keys, types.Int64Null(), "ci (b)")
+	// An exact unique_name picks one key out of an ambiguous name, including
+	// the legacy unsuffixed one.
+	for want, unique := range map[int64]string{2: "ci (" + uuidB + ")", 4: "ci"} {
+		ref = byName("ci")
+		ref.UniqueName = types.StringValue(unique)
+		found, err = resolveDeployKey(keys, ref)
 
-	if err != nil || found.Id != 2 {
-		t.Errorf("resolve full name = %v, %v; want Id 2", found, err)
+		if err != nil || found.Id != want {
+			t.Errorf("resolve unique_name %q = %v, %v; want Id %d", unique, found, err, want)
+		}
+	}
+
+	// A unique_name that is not listed falls back to the name match.
+	ref = byName("staging")
+	ref.UniqueName = types.StringValue("staging")
+	found, err = resolveDeployKey(keys, ref)
+
+	if err != nil || found.Id != 3 {
+		t.Errorf("resolve stale unique_name = %v, %v; want Id 3", found, err)
 	}
 }
 
 func TestSelectCreatedDeployKey(t *testing.T) {
 	before := []convex.PlatformDeployKeyResponse{
 		// Leftovers from earlier applies that answer to the same name.
-		{Id: 1, Name: "ci (a)"},
-		{Id: 2, Name: "ci (b)"},
+		{Id: 1, Name: "ci (" + uuidA + ")"},
+		{Id: 2, Name: "ci (" + uuidB + ")"},
 		{Id: 3, Name: "staging"},
+	}
+	newKey := func(id int64, name string) []convex.PlatformDeployKeyResponse {
+		return append(append([]convex.PlatformDeployKeyResponse{}, before...),
+			convex.PlatformDeployKeyResponse{Id: id, Name: name})
 	}
 
 	t.Run("one new matching key", func(t *testing.T) {
-		after := append(append([]convex.PlatformDeployKeyResponse{}, before...),
-			convex.PlatformDeployKeyResponse{Id: 7, Name: "ci (new)"})
-
-		found, err := selectCreatedDeployKey(before, after, "ci")
+		found, err := selectCreatedDeployKey(before, newKey(7, "ci ("+uuidC+")"), "ci")
 
 		if err != nil || found.Id != 7 {
 			t.Fatalf("selectCreatedDeployKey() = %v, %v; want Id 7", found, err)
@@ -343,9 +374,8 @@ func TestSelectCreatedDeployKey(t *testing.T) {
 	})
 
 	t.Run("new keys with other names are ignored", func(t *testing.T) {
-		after := append(append([]convex.PlatformDeployKeyResponse{}, before...),
-			convex.PlatformDeployKeyResponse{Id: 7, Name: "ci-other (x)"},
-			convex.PlatformDeployKeyResponse{Id: 8, Name: "ci (new)"})
+		after := append(newKey(7, "ci-other ("+uuidA+")"),
+			convex.PlatformDeployKeyResponse{Id: 8, Name: "ci (" + uuidC + ")"})
 
 		found, err := selectCreatedDeployKey(before, after, "ci")
 
@@ -355,27 +385,22 @@ func TestSelectCreatedDeployKey(t *testing.T) {
 	})
 
 	t.Run("no new key", func(t *testing.T) {
-		_, err := selectCreatedDeployKey(before, before, "ci")
-
-		if !errors.Is(err, errDeployKeyNotFound) {
+		if _, err := selectCreatedDeployKey(before, before, "ci"); !errors.Is(err, errDeployKeyNotFound) {
 			t.Fatalf("error = %v, want errDeployKeyNotFound", err)
 		}
 	})
 
 	t.Run("two new matching keys", func(t *testing.T) {
-		after := append(append([]convex.PlatformDeployKeyResponse{}, before...),
-			convex.PlatformDeployKeyResponse{Id: 7, Name: "ci (x)"},
-			convex.PlatformDeployKeyResponse{Id: 8, Name: "ci (y)"})
+		after := append(newKey(7, "ci ("+uuidC+")"),
+			convex.PlatformDeployKeyResponse{Id: 8, Name: "ci"})
 
-		_, err := selectCreatedDeployKey(before, after, "ci")
-
-		if !errors.Is(err, errDeployKeyAmbiguous) {
+		if _, err := selectCreatedDeployKey(before, after, "ci"); !errors.Is(err, errDeployKeyAmbiguous) {
 			t.Fatalf("error = %v, want errDeployKeyAmbiguous", err)
 		}
 	})
 
 	t.Run("empty before list", func(t *testing.T) {
-		after := []convex.PlatformDeployKeyResponse{{Id: 5, Name: "ci (x)"}}
+		after := []convex.PlatformDeployKeyResponse{{Id: 5, Name: "ci (" + uuidA + ")"}}
 
 		found, err := selectCreatedDeployKey(nil, after, "ci")
 
@@ -397,120 +422,68 @@ func TestDeployKeySecret(t *testing.T) {
 	}
 }
 
-// The list body below is the shape the live API returned on 2026-10-14, so
-// this exercises decoding as well as selection, against a fake server.
-func TestDeployKeyResourceListsAndResolves(t *testing.T) {
-	var calls int
-
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/deployments/playful-otter-123/list_deploy_keys" {
-			http.Error(w, "unexpected request "+r.Method+" "+r.URL.Path, http.StatusNotFound)
-			return
-		}
-
-		calls++
-		w.Header().Set("Content-Type", "application/json")
-
-		body := `{"allowedActions":["deployment:deploy"],"allowedOperations":null,"creationTime":1760400000000,` +
-			`"creator":7,"expiresAt":null,"id":41,"lastUsedTime":null,` +
-			`"name":"github-actions (0b0e7c1e-1111-4222-8333-944455556666)"}`
-
-		// The second listing is the one taken after the create.
-		if calls > 1 {
-			body += `,{"allowedActions":["deployment:deploy"],"allowedOperations":null,"creationTime":1760400100000,` +
-				`"creator":7,"expiresAt":null,"id":42,"lastUsedTime":null,` +
-				`"name":"github-actions (cbd71ace-cdac-417a-b967-78b318339e2e)"}`
-		}
-
-		_, _ = w.Write([]byte("[" + body + "]"))
-	}))
-	defer server.Close()
-
-	client, err := convex.NewAuthenticated(server.URL, "fake-token")
-
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	r := &deployKeyResource{client: client}
-	ctx := t.Context()
-	list := r.lister("playful-otter-123")
-
-	before, err := r.listDeployKeys(ctx, "playful-otter-123")
-
-	if err != nil || len(before) != 1 {
-		t.Fatalf("listDeployKeys() = %v, %v; want one key", before, err)
-	}
-
-	created, err := listAndSelectCreatedDeployKey(ctx, list, "github-actions", before)
-
-	if err != nil {
-		t.Fatalf("listAndSelectCreatedDeployKey() error = %v", err)
-	}
-
-	if created.Id != 42 || created.Name != "github-actions (cbd71ace-cdac-417a-b967-78b318339e2e)" {
-		t.Errorf("listAndSelectCreatedDeployKey() = %d %q, want 42 and the suffixed name", created.Id, created.Name)
-	}
-
-	// By id, the refresh after the create finds the same key.
-	found, err := listAndResolveDeployKey(ctx, list, types.Int64Value(42), "github-actions")
-
-	if err != nil || found.Id != 42 {
-		t.Errorf("listAndResolveDeployKey(by id) = %v, %v; want Id 42", found, err)
-	}
-
-	// Without an id, two keys now answer to the name.
-	_, err = listAndResolveDeployKey(ctx, list, types.Int64Null(), "github-actions")
-
-	if !errors.Is(err, errDeployKeyAmbiguous) {
-		t.Errorf("listAndResolveDeployKey(by name) error = %v, want errDeployKeyAmbiguous", err)
-	}
-}
-
 func TestDeployKeyDeleteTarget(t *testing.T) {
 	ctx := t.Context()
-	keys := []convex.PlatformDeployKeyResponse{{Id: 4, Name: "ci (a)"}}
-	var listed int
-	list := func(context.Context) ([]convex.PlatformDeployKeyResponse, error) {
-		listed++
-		return keys, nil
+	keys := []convex.PlatformDeployKeyResponse{
+		{Id: 4, Name: "ci (" + uuidA + ")"},
+		{Id: 5, Name: "dup (" + uuidB + ")"},
+		{Id: 6, Name: "dup (" + uuidC + ")"},
+	}
+	list := func(context.Context) ([]convex.PlatformDeployKeyResponse, error) { return keys, nil }
+	failWith := func(err error) deployKeyLister {
+		return func(context.Context) ([]convex.PlatformDeployKeyResponse, error) { return nil, err }
+	}
+	ref := func(id types.Int64, name, secret string) deployKeyRef {
+		s := types.StringNull()
+
+		if secret != "" {
+			s = types.StringValue(secret)
+		}
+
+		return deployKeyRef{ID: id, UniqueName: types.StringNull(), Name: name, Secret: s}
 	}
 
-	// A secret in state is used as is, with no lookup.
-	target, gone, err := deployKeyDeleteTarget(ctx, list, types.StringValue("prod:abc"), types.Int64Null(), "ci")
-
-	if err != nil || gone || target != "prod:abc" || listed != 0 {
-		t.Errorf("with secret = %q, %v, %v after %d lists; want the secret and no list", target, gone, err, listed)
+	tests := []struct {
+		name       string
+		list       deployKeyLister
+		ref        deployKeyRef
+		wantTarget string
+		wantGone   bool
+		wantErr    bool
+	}{
+		// Found by id: the listed name, even when the secret is known.
+		{"listed by id", list, ref(types.Int64Value(4), "ci", "prod:abc"), "ci (" + uuidA + ")", false, false},
+		{"listed by id, no secret", list, ref(types.Int64Value(4), "ci", ""), "ci (" + uuidA + ")", false, false},
+		// A known id no longer listed: deleted already.
+		{"id gone", list, ref(types.Int64Value(99), "ci", "prod:abc"), "", true, false},
+		// No id and the list cannot pin it down: the secret is the fallback.
+		{"no id, ambiguous, secret", list, ref(types.Int64Null(), "dup", "prod:abc"), "prod:abc", false, false},
+		{"no id, missing, secret", list, ref(types.Int64Null(), "never", "prod:abc"), "prod:abc", false, false},
+		{"no id, ambiguous, no secret", list, ref(types.Int64Null(), "dup", ""), "", false, true},
+		{"no id, missing, no secret", list, ref(types.Int64Null(), "never", ""), "", true, false},
+		{"no id, unique", list, ref(types.Int64Null(), "ci", ""), "ci (" + uuidA + ")", false, false},
+		// The deployment itself is gone.
+		{"list 404", failWith(&convex.APIError{StatusCode: 404}), ref(types.Int64Value(4), "ci", ""), "", true, false},
+		// A failed list is an error, not "already gone" -- unless the secret
+		// can name the key without it.
+		{"list fails", failWith(errors.New("boom")), ref(types.Int64Value(4), "ci", ""), "", false, true},
+		{"list fails, secret", failWith(errors.New("boom")), ref(types.Int64Value(4), "ci", "prod:abc"), "prod:abc", false, false},
 	}
 
-	// Without one, the full listed name, never the configured one.
-	target, gone, err = deployKeyDeleteTarget(ctx, list, types.StringNull(), types.Int64Value(4), "ci")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			target, gone, err := deployKeyDeleteTarget(ctx, tt.list, tt.ref)
 
-	if err != nil || gone || target != "ci (a)" {
-		t.Errorf("without secret = %q, %v, %v; want \"ci (a)\"", target, gone, err)
-	}
-
-	// A key that no longer exists is already deleted.
-	_, gone, err = deployKeyDeleteTarget(ctx, list, types.StringNull(), types.Int64Value(99), "ci")
-
-	if err != nil || !gone {
-		t.Errorf("missing key = gone %v, %v; want gone and no error", gone, err)
-	}
-
-	// A failed listing is an error, not "already gone".
-	failing := func(context.Context) ([]convex.PlatformDeployKeyResponse, error) {
-		return nil, errors.New("boom")
-	}
-
-	_, gone, err = deployKeyDeleteTarget(ctx, failing, types.StringNull(), types.Int64Value(4), "ci")
-
-	if err == nil || gone {
-		t.Errorf("failed list = gone %v, %v; want an error", gone, err)
+			if target != tt.wantTarget || gone != tt.wantGone || (err != nil) != tt.wantErr {
+				t.Errorf("deployKeyDeleteTarget() = %q, gone %v, err %v; want %q, gone %v, err %v",
+					target, gone, err, tt.wantTarget, tt.wantGone, tt.wantErr)
+			}
+		})
 	}
 }
 
 func TestAdoptedDeployKeyName(t *testing.T) {
-	full := "ci (cbd71ace-cdac-417a-b967-78b318339e2e)"
+	full := "ci (" + uuidA + ")"
 	key := &convex.PlatformDeployKeyResponse{Id: 1, Name: full}
 
 	// Imported by full name: recorded as the short one.
@@ -526,4 +499,28 @@ func TestAdoptedDeployKeyName(t *testing.T) {
 	if got := adoptedDeployKeyName(types.Int64Value(1), full, key); got != types.StringValue(full) {
 		t.Errorf("known id = %v, want the name unchanged", got)
 	}
+}
+
+func TestKeyedMutexSerialisesPerKey(t *testing.T) {
+	var locks keyedMutex
+
+	unlockA := locks.lock("a")
+	// A different key is independent and must not block.
+	locks.lock("b")()
+
+	acquired := make(chan struct{})
+
+	go func() {
+		locks.lock("a")()
+		close(acquired)
+	}()
+
+	select {
+	case <-acquired:
+		t.Fatal("second lock on the same key acquired while the first was held")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	unlockA()
+	<-acquired
 }
