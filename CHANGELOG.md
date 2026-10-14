@@ -8,9 +8,40 @@ Grouped as Added / Changed / Fixed / Removed, following
 [semantic versioning](https://semver.org/spec/v2.0.0.html), with the usual 0.x
 caveat that minor releases may still break.
 
-## Unreleased
+## Unreleased (0.2.1)
 
-Nothing yet.
+### Fixed
+
+- `convex_deploy_key` and `convex_preview_deploy_key` work again now that
+  Convex makes deploy key names unique by appending ` (<uuid>)`: a key created
+  as `github-actions` is listed as `github-actions (cbd71ace-...)`. 0.2.0 looked
+  keys up by exact name, so every create failed with "Error reading back
+  created deploy key", saved state with a null `id`, the next refresh dropped
+  it as deleted, and each apply made one more key. Now:
+  - Create lists the keys before and after the create call and takes the one
+    new key whose name matches. If that is not exactly one key, the secret is
+    still saved to state and the apply reports the error, as before.
+  - Read finds the key by its stable `id`. A key with no `id` in state (an
+    import, or state written by 0.2.0) is adopted by name when exactly one key
+    matches; several matches fail with their ids listed, so the extras can be
+    deleted or the right one imported by its full name.
+  - Delete uses the secret from state, or the key's full listed name when
+    there is no secret (an imported key).
+  - `name` keeps the configured value, so there is no perpetual diff. A listed
+    name matches the configured one when it is equal or is
+    `<configured> (<suffix>)`; `ci` does not match `ci-other (...)`.
+
+  Keys orphaned by 0.2.0 still exist in Convex and are not deleted by this
+  fix. If several keys match a resource's name, its refresh reports them;
+  delete the extras in the dashboard.
+
+### Added
+
+- `unique_name` on `convex_deploy_key` and `convex_preview_deploy_key`: the
+  key's full name as Convex lists it.
+- Import accepts either the short name or the full listed name
+  (`'playful-otter-123/github-actions (<uuid>)'`). A full name is recorded as
+  the short one, so configurations using the short name plan no replacement.
 
 ## 0.2.0 (2026-08-03)
 

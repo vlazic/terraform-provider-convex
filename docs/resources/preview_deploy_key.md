@@ -6,7 +6,7 @@ description: |-
   Manages a preview deploy key for a Convex project. Preview deploy keys let a CI or hosting integration spin up preview deployments, so they belong to a project rather than to any one deployment.
   ~> The generated key is stored in Terraform state in plain text. Convex returns the secret only once, at creation, so it cannot be read back. Treat the state file as a secret.
   Convex offers no endpoint for changing a preview deploy key, so every attribute forces replacement.
-  Convex has no get-by-id endpoint, so reads list the project's keys and match on name. Names must therefore be unique within the project.
+  Convex makes deploy key names unique by appending a suffix: a key created as previews is listed as previews (<uuid>). The provider keeps name as configured and reports the full listed name in unique_name. Convex has no get-by-id endpoint, so reads list the project's keys and match on the stable id. A key with no id in state (an import, or state written by v0.2.0) is adopted by name instead, and that fails, listing the candidates' ids, when more than one key matches.
 ---
 
 # convex_preview_deploy_key (Resource)
@@ -17,7 +17,7 @@ Manages a preview deploy key for a Convex project. Preview deploy keys let a CI 
 
 Convex offers no endpoint for changing a preview deploy key, so every attribute forces replacement.
 
-Convex has no get-by-id endpoint, so reads list the project's keys and match on `name`. Names must therefore be unique within the project.
+Convex makes deploy key names unique by appending a suffix: a key created as `previews` is listed as `previews (<uuid>)`. The provider keeps `name` as configured and reports the full listed name in `unique_name`. Convex has no get-by-id endpoint, so reads list the project's keys and match on the stable `id`. A key with no `id` in state (an import, or state written by v0.2.0) is adopted by name instead, and that fails, listing the candidates' ids, when more than one key matches.
 
 ## Example Usage
 
@@ -47,7 +47,7 @@ output "preview_deploy_key" {
 
 ### Required
 
-- `name` (String) Name of the preview deploy key. Must be unique within the project, since the API uses it as an identifier. Changing this forces a new key.
+- `name` (String) Name the preview deploy key is created with. Convex appends a unique suffix when storing it, which is reported in `unique_name`; this attribute keeps the configured value. Changing this forces a new key.
 - `project_id` (Number) Numeric identifier of the project the key belongs to. Changing this forces a new key.
 
 ### Optional
@@ -62,6 +62,7 @@ output "preview_deploy_key" {
 - `id` (Number) Stable numeric identifier of the preview deploy key.
 - `key` (String, Sensitive) The generated preview deploy key. Available only on the apply that creates it; an imported key has this set to null.
 - `last_used_time` (Number) Timestamp of the last use of this key, or null if it has never been used. Changes outside Terraform whenever the key is used.
+- `unique_name` (String) The key's full name as Convex lists it, such as `previews (cbd71ace-cdac-417a-b967-78b318339e2e)`. Convex appends the suffix to make names unique; keys created before it did so have no suffix.
 
 ## Import
 
@@ -72,7 +73,13 @@ The [`terraform import` command](https://developer.hashicorp.com/terraform/cli/c
 ```shell
 # Preview deploy keys are imported as "<project_id>/<key_name>".
 #
-# As with regular deploy keys, the secret cannot be recovered, so the `key`
-# attribute of an imported resource is null.
+# As with regular deploy keys, <key_name> may be the name the key was created
+# with or its full listed name, such as
+# "vercel (cbd71ace-cdac-417a-b967-78b318339e2e)"; use the full name when
+# several keys match the short one.
+#
+# The secret cannot be recovered, so the `key` attribute of an imported
+# resource is null.
 terraform import convex_preview_deploy_key.vercel 12345/vercel
+terraform import convex_preview_deploy_key.vercel '12345/vercel (cbd71ace-cdac-417a-b967-78b318339e2e)'
 ```
