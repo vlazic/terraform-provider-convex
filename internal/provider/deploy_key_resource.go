@@ -48,10 +48,11 @@ type deployKeyResourceModel struct {
 
 	Key types.String `tfsdk:"key"`
 
-	ID           types.Int64 `tfsdk:"id"`
-	CreationTime types.Int64 `tfsdk:"creation_time"`
-	LastUsedTime types.Int64 `tfsdk:"last_used_time"`
-	Creator      types.Int64 `tfsdk:"creator"`
+	UniqueName   types.String `tfsdk:"unique_name"`
+	ID           types.Int64  `tfsdk:"id"`
+	CreationTime types.Int64  `tfsdk:"creation_time"`
+	LastUsedTime types.Int64  `tfsdk:"last_used_time"`
+	Creator      types.Int64  `tfsdk:"creator"`
 }
 
 func (r *deployKeyResource) Metadata(_ context.Context, req resource.MetadataRequest, resp *resource.MetadataResponse) {
@@ -68,8 +69,12 @@ func (r *deployKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			"Convex offers no endpoint for changing a deploy key, so every attribute forces replacement. " +
 			"Replacing a key creates the new one and destroys the old one, which will break anything still " +
 			"using the old value.\n\n" +
-			"Convex has no get-by-id endpoint for deploy keys, so reads list the deployment's keys and match " +
-			"on `name`. Names must therefore be unique within the deployment.",
+			"Convex makes deploy key names unique by appending a suffix: a key created as `github-actions` " +
+			"is listed as `github-actions (<uuid>)`. The provider keeps `name` as configured and reports the " +
+			"full listed name in `unique_name`. Convex has no get-by-id endpoint for deploy keys, so reads " +
+			"list the deployment's keys and match on the stable `id`. A key with no `id` in state (an import, " +
+			"or state written by v0.2.0) is adopted by name instead, and that fails, listing the candidates' " +
+			"ids, when more than one key matches.",
 		Attributes: map[string]schema.Attribute{
 			"deployment_name": schema.StringAttribute{
 				Required: true,
@@ -81,8 +86,9 @@ func (r *deployKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 			},
 			"name": schema.StringAttribute{
 				Required: true,
-				MarkdownDescription: "Name of the deploy key. Must be unique within the deployment, since the " +
-					"API uses it as an identifier. Changing this forces a new key.",
+				MarkdownDescription: "Name the deploy key is created with. Convex appends a unique suffix when " +
+					"storing it, which is reported in `unique_name`; this attribute keeps the configured value. " +
+					"Changing this forces a new key.",
 				Validators: []validator.String{
 					stringvalidator.LengthAtLeast(1),
 				},
@@ -121,6 +127,15 @@ func (r *deployKeyResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 				Sensitive: true,
 				MarkdownDescription: "The generated deploy key. Available only on the apply that creates it; " +
 					"an imported key has this set to null, because Convex cannot return it again.",
+				PlanModifiers: []planmodifier.String{
+					stringplanmodifier.UseStateForUnknown(),
+				},
+			},
+			"unique_name": schema.StringAttribute{
+				Computed: true,
+				MarkdownDescription: "The key's full name as Convex lists it, such as " +
+					"`github-actions (cbd71ace-cdac-417a-b967-78b318339e2e)`. Convex appends the suffix to make " +
+					"names unique; keys created before it did so have no suffix.",
 				PlanModifiers: []planmodifier.String{
 					stringplanmodifier.UseStateForUnknown(),
 				},
@@ -190,6 +205,21 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 	}
 
 	deploymentName := plan.DeploymentName.ValueString()
+
+	// Snapshot the existing keys, so the one this call creates can be told
+	// apart from older keys answering to the same name. Nothing has been
+	// created yet, so failing here is safe.
+	before, err := r.listDeployKeys(ctx, deploymentName)
+
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error creating Convex deploy key",
+			fmt.Sprintf("Could not list the existing deploy keys of deployment %q before creating %q: %s",
+				deploymentName, args.Name, err),
+		)
+		return
+	}
+
 	created, err := r.client.CreateDeployKeyWithResponse(ctx, deploymentName, args)
 
 	if err != nil {
@@ -224,9 +254,10 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 	// has to come from the list endpoint. The key exists from here on, so a
 	// failure must still write state -- losing the secret would mean a key that
 	// can never be recovered or cleanly destroyed.
-	key, err := r.getDeployKey(ctx, deploymentName, args.Name)
+	key, err := r.findCreatedDeployKey(ctx, deploymentName, args.Name, before)
 
 	if err != nil {
+		plan.UniqueName = types.StringNull()
 		plan.ID = types.Int64Null()
 		plan.CreationTime = types.Int64Null()
 		plan.LastUsedTime = types.Int64Null()
@@ -243,9 +274,10 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 		resp.Diagnostics.Append(resp.State.Set(ctx, &plan)...)
 		resp.Diagnostics.AddError(
 			"Error reading back created deploy key",
-			fmt.Sprintf("Deploy key %q was created on deployment %q but its metadata could not be read: %s. "+
-				"The key has been saved to state; the remaining attributes are populated on the next refresh.",
-				args.Name, deploymentName, err),
+			fmt.Sprintf("Deploy key %q was created on deployment %q but could not be identified in the "+
+				"deployment's key list: %s. The key and its secret have been saved to state; the next refresh "+
+				"adopts the key by name if exactly one matches, and destroying the resource deletes it by its "+
+				"secret.", args.Name, deploymentName, err),
 		)
 		return
 	}
@@ -265,7 +297,7 @@ func (r *deployKeyResource) Read(ctx context.Context, req resource.ReadRequest, 
 	deploymentName := state.DeploymentName.ValueString()
 	name := state.Name.ValueString()
 
-	key, err := r.getDeployKey(ctx, deploymentName, name)
+	key, err := r.resolveDeployKey(ctx, deploymentName, state.ID, name)
 
 	if err != nil {
 		var apiErr *convex.APIError
@@ -277,11 +309,27 @@ func (r *deployKeyResource) Read(ctx context.Context, req resource.ReadRequest, 
 			return
 		}
 
+		if errors.Is(err, errDeployKeyAmbiguous) {
+			resp.Diagnostics.AddError(
+				"Ambiguous Convex deploy key",
+				ambiguousDeployKeyDetail(err, fmt.Sprintf(
+					"terraform import convex_deploy_key.<name> '%s/%s (<uuid>)'", deploymentName, name)),
+			)
+			return
+		}
+
 		resp.Diagnostics.AddError(
 			"Error reading Convex deploy key",
 			fmt.Sprintf("Could not read deploy key %q on deployment %q: %s", name, deploymentName, err),
 		)
 		return
+	}
+
+	// A key imported by its full listed name has that name in state; record
+	// the name it was created with instead, so a configuration using the short
+	// name does not plan a replacement.
+	if !isSet(state.ID) && key.Name == name {
+		state.Name = types.StringValue(deployKeyBaseName(name))
 	}
 
 	// Note that the secret in state is left untouched: the list endpoint does
@@ -312,10 +360,33 @@ func (r *deployKeyResource) Delete(ctx context.Context, req resource.DeleteReque
 	deploymentName := state.DeploymentName.ValueString()
 	name := state.Name.ValueString()
 
-	// The delete endpoint accepts either the secret or the name; the name is
-	// always available, including on imported keys.
+	// The delete endpoint accepts either the secret or the key's full listed
+	// name. The configured name would miss, since Convex stores it with a
+	// suffix, so a key with no secret (an imported one) is looked up first.
+	id, ok := deployKeySecret(state.Key)
+
+	if !ok {
+		key, err := r.resolveDeployKey(ctx, deploymentName, state.ID, name)
+
+		if errors.Is(err, errDeployKeyNotFound) {
+			// Already gone, which is the desired end state.
+			return
+		}
+
+		if err != nil {
+			resp.Diagnostics.AddError(
+				"Error deleting Convex deploy key",
+				fmt.Sprintf("Could not find deploy key %q on deployment %q to delete it: %s",
+					name, deploymentName, err),
+			)
+			return
+		}
+
+		id = key.Name
+	}
+
 	deleted, err := r.client.DeleteDeployKeyWithResponse(ctx, deploymentName,
-		convex.PlatformDeleteDeployKeyArgs{Id: name})
+		convex.PlatformDeleteDeployKeyArgs{Id: id})
 
 	if err != nil {
 		resp.Diagnostics.AddError("Error deleting Convex deploy key", err.Error())
@@ -343,13 +414,17 @@ func (r *deployKeyResource) ImportState(ctx context.Context, req resource.Import
 	if !ok || deploymentName == "" || name == "" {
 		resp.Diagnostics.AddError(
 			"Invalid import identifier",
-			fmt.Sprintf("Expected \"<deployment_name>/<key_name>\", got %q. Import with: "+
+			fmt.Sprintf("Expected \"<deployment_name>/<key_name>\", got %q, where <key_name> is either the "+
+				"name the key was created with or its full listed name. Import with: "+
 				"terraform import convex_deploy_key.ci playful-otter-123/ci", req.ID),
 		)
 		return
 	}
 
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("deployment_name"), deploymentName)...)
+	// The id stays null, so the read that follows the import adopts the key by
+	// name: exactly one match is required, and an imported full listed name
+	// matches only itself.
 	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("name"), name)...)
 	// Recording the secret as explicitly absent keeps later plans quiet; an
 	// unknown value here would never resolve.
@@ -363,9 +438,9 @@ func (r *deployKeyResource) ImportState(ctx context.Context, req resource.Import
 	)
 }
 
-// getDeployKey finds a key by name. The API has no get-by-id endpoint for
-// deploy keys, so this lists and filters.
-func (r *deployKeyResource) getDeployKey(ctx context.Context, deploymentName, name string) (*convex.PlatformDeployKeyResponse, error) {
+// listDeployKeys returns every key of a deployment. The API has no get-by-id
+// endpoint for deploy keys, so every lookup goes through this.
+func (r *deployKeyResource) listDeployKeys(ctx context.Context, deploymentName string) ([]convex.PlatformDeployKeyResponse, error) {
 	listed, err := r.client.ListDeployKeysWithResponse(ctx, deploymentName)
 
 	if err != nil {
@@ -380,7 +455,31 @@ func (r *deployKeyResource) getDeployKey(ctx context.Context, deploymentName, na
 		return nil, errors.New("the API returned a successful status with no deploy key list")
 	}
 
-	return findDeployKeyByName(*listed.JSON200, name)
+	return *listed.JSON200, nil
+}
+
+// resolveDeployKey finds the key state refers to: by id when known, else by
+// name match (see the shared resolveDeployKey).
+func (r *deployKeyResource) resolveDeployKey(ctx context.Context, deploymentName string, id types.Int64, name string) (*convex.PlatformDeployKeyResponse, error) {
+	keys, err := r.listDeployKeys(ctx, deploymentName)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resolveDeployKey(keys, id, name)
+}
+
+// findCreatedDeployKey lists the keys again after a create and picks out the
+// one that call made.
+func (r *deployKeyResource) findCreatedDeployKey(ctx context.Context, deploymentName, name string, before []convex.PlatformDeployKeyResponse) (*convex.PlatformDeployKeyResponse, error) {
+	after, err := r.listDeployKeys(ctx, deploymentName)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return selectCreatedDeployKey(before, after, name)
 }
 
 // applyDeployKey copies list metadata onto the model, leaving the secret alone.
@@ -391,7 +490,9 @@ func applyDeployKey(ctx context.Context, model *deployKeyResourceModel, key *con
 		return diags
 	}
 
-	model.Name = types.StringValue(key.Name)
+	// Name stays as configured; the suffixed form Convex stores goes in
+	// unique_name, so the two never fight over one attribute.
+	model.UniqueName = types.StringValue(key.Name)
 	model.ID = metadata.ID
 	model.CreationTime = metadata.CreationTime
 	model.LastUsedTime = metadata.LastUsedTime
