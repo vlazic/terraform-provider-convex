@@ -60,7 +60,10 @@ var errDeployKeyAmbiguous = errors.New("deploy key name is ambiguous")
 // as "github-actions" lists back as "github-actions (cbd71ace-...)". Keys made
 // before that change keep their plain name, so an exact match counts too.
 //
-// The suffix check is deliberately strict. The text between the parentheses
+// It accepts any parenthesised suffix, unlike deployKeyBaseName, so a key
+// still matches if Convex changes what it appends.
+//
+// The suffix check is otherwise strict. The text between the parentheses
 // may not itself contain one, so "ci" matches neither "ci-other (x)" (wrong
 // prefix) nor "ci (staging) (x)" -- the latter is a key created as
 // "ci (staging)", not as "ci".
@@ -88,7 +91,10 @@ var uniqueSuffixPattern = regexp.MustCompile(` \([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[
 // name the key was created with. It is used when a key is imported by its full
 // listed name: recording that full name as `name` would make every plan want
 // to replace a resource configured with the short one. Only a UUID-shaped
-// suffix is stripped, so a name that merely ends in parentheses is kept.
+// suffix is stripped, so a user's own name such as "deploy (prod)" is kept.
+// That is narrower than deployKeyNameMatches on purpose: if Convex changes its
+// suffix, an import by full name shows up as a planned replacement, visibly,
+// rather than silently rewriting a name.
 func deployKeyBaseName(listed string) string {
 	return uniqueSuffixPattern.ReplaceAllString(listed, "")
 }
@@ -187,17 +193,79 @@ func describeDeployKeys(keys []*convex.PlatformDeployKeyResponse) string {
 	return strings.Join(parts, ", ")
 }
 
-// deployKeySecret returns the secret held in state, if any. The delete
-// endpoint accepts either the secret or the key's full listed name, and the
-// secret is preferred: it names exactly one key with no lookup. An imported
-// key has none, and then the full listed name of the resolved key is used --
-// the configured name would miss, since Convex stores it with a suffix.
+// deployKeySecret returns the secret held in state, if it has one. An imported
+// key has none.
 func deployKeySecret(secret types.String) (string, bool) {
 	if !isSet(secret) || secret.ValueString() == "" {
 		return "", false
 	}
 
 	return secret.ValueString(), true
+}
+
+// deployKeyLister lists every key of one deployment or project. Each resource
+// passes a closure over its own list endpoint, so the lookups below are shared.
+type deployKeyLister func(context.Context) ([]convex.PlatformDeployKeyResponse, error)
+
+// listAndResolveDeployKey lists the keys and finds the one state refers to
+// (see resolveDeployKey).
+func listAndResolveDeployKey(ctx context.Context, list deployKeyLister, id types.Int64, name string) (*convex.PlatformDeployKeyResponse, error) {
+	keys, err := list(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return resolveDeployKey(keys, id, name)
+}
+
+// listAndSelectCreatedDeployKey lists the keys again after a create and picks
+// out the one that call made (see selectCreatedDeployKey).
+func listAndSelectCreatedDeployKey(ctx context.Context, list deployKeyLister, name string, before []convex.PlatformDeployKeyResponse) (*convex.PlatformDeployKeyResponse, error) {
+	after, err := list(ctx)
+
+	if err != nil {
+		return nil, err
+	}
+
+	return selectCreatedDeployKey(before, after, name)
+}
+
+// deployKeyDeleteTarget picks the identifier to pass to a delete endpoint, or
+// reports that the key is already gone.
+//
+// The delete endpoints accept either the secret or the key's full listed name.
+// The secret is preferred: it names exactly one key with no lookup. Without it
+// (an imported key) the key is looked up and its full listed name used; the
+// configured name would miss, since Convex stores it with a suffix.
+func deployKeyDeleteTarget(ctx context.Context, list deployKeyLister, secret types.String, id types.Int64, name string) (target string, gone bool, err error) {
+	if target, ok := deployKeySecret(secret); ok {
+		return target, false, nil
+	}
+
+	key, err := listAndResolveDeployKey(ctx, list, id, name)
+
+	if errors.Is(err, errDeployKeyNotFound) {
+		return "", true, nil
+	}
+
+	if err != nil {
+		return "", false, err
+	}
+
+	return key.Name, false, nil
+}
+
+// adoptedDeployKeyName returns the name to keep in state after a read. A key
+// imported by its full listed name has that name in state with no id; it is
+// recorded as the name the key was created with, so a configuration using the
+// short name does not plan a replacement. Otherwise the name is unchanged.
+func adoptedDeployKeyName(id types.Int64, name string, key *convex.PlatformDeployKeyResponse) types.String {
+	if !isSet(id) && key.Name == name {
+		return types.StringValue(deployKeyBaseName(name))
+	}
+
+	return types.StringValue(name)
 }
 
 // ambiguousDeployKeyDetail explains how to get out of an ambiguous match.

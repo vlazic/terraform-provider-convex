@@ -254,7 +254,7 @@ func (r *deployKeyResource) Create(ctx context.Context, req resource.CreateReque
 	// has to come from the list endpoint. The key exists from here on, so a
 	// failure must still write state -- losing the secret would mean a key that
 	// can never be recovered or cleanly destroyed.
-	key, err := r.findCreatedDeployKey(ctx, deploymentName, args.Name, before)
+	key, err := listAndSelectCreatedDeployKey(ctx, r.lister(deploymentName), args.Name, before)
 
 	if err != nil {
 		plan.UniqueName = types.StringNull()
@@ -297,7 +297,7 @@ func (r *deployKeyResource) Read(ctx context.Context, req resource.ReadRequest, 
 	deploymentName := state.DeploymentName.ValueString()
 	name := state.Name.ValueString()
 
-	key, err := r.resolveDeployKey(ctx, deploymentName, state.ID, name)
+	key, err := listAndResolveDeployKey(ctx, r.lister(deploymentName), state.ID, name)
 
 	if err != nil {
 		var apiErr *convex.APIError
@@ -325,12 +325,7 @@ func (r *deployKeyResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 
-	// A key imported by its full listed name has that name in state; record
-	// the name it was created with instead, so a configuration using the short
-	// name does not plan a replacement.
-	if !isSet(state.ID) && key.Name == name {
-		state.Name = types.StringValue(deployKeyBaseName(name))
-	}
+	state.Name = adoptedDeployKeyName(state.ID, name, key)
 
 	// Note that the secret in state is left untouched: the list endpoint does
 	// not return it, and it can never be fetched again.
@@ -360,29 +355,22 @@ func (r *deployKeyResource) Delete(ctx context.Context, req resource.DeleteReque
 	deploymentName := state.DeploymentName.ValueString()
 	name := state.Name.ValueString()
 
-	// The delete endpoint accepts either the secret or the key's full listed
-	// name. The configured name would miss, since Convex stores it with a
-	// suffix, so a key with no secret (an imported one) is looked up first.
-	id, ok := deployKeySecret(state.Key)
+	// Without a secret in state the key is looked up, because the configured
+	// name would miss: Convex stores it with a suffix (see deployKeyDeleteTarget).
+	id, gone, err := deployKeyDeleteTarget(ctx, r.lister(deploymentName), state.Key, state.ID, name)
 
-	if !ok {
-		key, err := r.resolveDeployKey(ctx, deploymentName, state.ID, name)
+	if gone {
+		// Already gone, which is the desired end state.
+		return
+	}
 
-		if errors.Is(err, errDeployKeyNotFound) {
-			// Already gone, which is the desired end state.
-			return
-		}
-
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error deleting Convex deploy key",
-				fmt.Sprintf("Could not find deploy key %q on deployment %q to delete it: %s",
-					name, deploymentName, err),
-			)
-			return
-		}
-
-		id = key.Name
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error deleting Convex deploy key",
+			fmt.Sprintf("Could not find deploy key %q on deployment %q to delete it: %s",
+				name, deploymentName, err),
+		)
+		return
 	}
 
 	deleted, err := r.client.DeleteDeployKeyWithResponse(ctx, deploymentName,
@@ -458,28 +446,11 @@ func (r *deployKeyResource) listDeployKeys(ctx context.Context, deploymentName s
 	return *listed.JSON200, nil
 }
 
-// resolveDeployKey finds the key state refers to: by id when known, else by
-// name match (see the shared resolveDeployKey).
-func (r *deployKeyResource) resolveDeployKey(ctx context.Context, deploymentName string, id types.Int64, name string) (*convex.PlatformDeployKeyResponse, error) {
-	keys, err := r.listDeployKeys(ctx, deploymentName)
-
-	if err != nil {
-		return nil, err
+// lister binds listDeployKeys to one deployment for the shared lookups.
+func (r *deployKeyResource) lister(deploymentName string) deployKeyLister {
+	return func(ctx context.Context) ([]convex.PlatformDeployKeyResponse, error) {
+		return r.listDeployKeys(ctx, deploymentName)
 	}
-
-	return resolveDeployKey(keys, id, name)
-}
-
-// findCreatedDeployKey lists the keys again after a create and picks out the
-// one that call made.
-func (r *deployKeyResource) findCreatedDeployKey(ctx context.Context, deploymentName, name string, before []convex.PlatformDeployKeyResponse) (*convex.PlatformDeployKeyResponse, error) {
-	after, err := r.listDeployKeys(ctx, deploymentName)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return selectCreatedDeployKey(before, after, name)
 }
 
 // applyDeployKey copies list metadata onto the model, leaving the secret alone.

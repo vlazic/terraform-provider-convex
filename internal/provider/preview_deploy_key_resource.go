@@ -232,7 +232,7 @@ func (r *previewDeployKeyResource) Create(ctx context.Context, req resource.Crea
 	// The create response carries the secret and nothing else. The key exists
 	// from here on, so a failure must still write state -- losing the secret
 	// would strand a key that cannot be recovered.
-	key, err := r.findCreatedPreviewDeployKey(ctx, projectID, args.Name, before)
+	key, err := listAndSelectCreatedDeployKey(ctx, r.lister(projectID), args.Name, before)
 
 	if err != nil {
 		plan.UniqueName = types.StringNull()
@@ -272,7 +272,7 @@ func (r *previewDeployKeyResource) Read(ctx context.Context, req resource.ReadRe
 	projectID := state.ProjectID.ValueInt64()
 	name := state.Name.ValueString()
 
-	key, err := r.resolvePreviewDeployKey(ctx, projectID, state.ID, name)
+	key, err := listAndResolveDeployKey(ctx, r.lister(projectID), state.ID, name)
 
 	if err != nil {
 		var apiErr *convex.APIError
@@ -300,12 +300,7 @@ func (r *previewDeployKeyResource) Read(ctx context.Context, req resource.ReadRe
 		return
 	}
 
-	// A key imported by its full listed name has that name in state; record
-	// the name it was created with instead, so a configuration using the short
-	// name does not plan a replacement.
-	if !isSet(state.ID) && key.Name == name {
-		state.Name = types.StringValue(deployKeyBaseName(name))
-	}
+	state.Name = adoptedDeployKeyName(state.ID, name, key)
 
 	// The secret in state is left untouched; the list endpoint never returns it.
 	resp.Diagnostics.Append(applyPreviewDeployKey(ctx, &state, key)...)
@@ -333,29 +328,22 @@ func (r *previewDeployKeyResource) Delete(ctx context.Context, req resource.Dele
 	projectID := state.ProjectID.ValueInt64()
 	name := state.Name.ValueString()
 
-	// The delete endpoint accepts either the secret or the key's full listed
-	// name; the configured name would miss, since Convex stores it with a
-	// suffix. A key with no secret (an imported one) is looked up first.
-	id, ok := deployKeySecret(state.Key)
+	// Without a secret in state the key is looked up, because the configured
+	// name would miss: Convex stores it with a suffix (see deployKeyDeleteTarget).
+	id, gone, err := deployKeyDeleteTarget(ctx, r.lister(projectID), state.Key, state.ID, name)
 
-	if !ok {
-		key, err := r.resolvePreviewDeployKey(ctx, projectID, state.ID, name)
+	if gone {
+		// Already gone, which is the desired end state.
+		return
+	}
 
-		if errors.Is(err, errDeployKeyNotFound) {
-			// Already gone, which is the desired end state.
-			return
-		}
-
-		if err != nil {
-			resp.Diagnostics.AddError(
-				"Error deleting Convex preview deploy key",
-				fmt.Sprintf("Could not find preview deploy key %q in project %d to delete it: %s",
-					name, projectID, err),
-			)
-			return
-		}
-
-		id = key.Name
+	if err != nil {
+		resp.Diagnostics.AddError(
+			"Error deleting Convex preview deploy key",
+			fmt.Sprintf("Could not find preview deploy key %q in project %d to delete it: %s",
+				name, projectID, err),
+		)
+		return
 	}
 
 	deleted, err := r.client.DeletePreviewDeployKeyWithResponse(ctx, projectID,
@@ -444,28 +432,11 @@ func (r *previewDeployKeyResource) listPreviewDeployKeys(ctx context.Context, pr
 	return listed.JSON200.Items, nil
 }
 
-// resolvePreviewDeployKey finds the key state refers to: by id when known,
-// else by name match (see resolveDeployKey).
-func (r *previewDeployKeyResource) resolvePreviewDeployKey(ctx context.Context, projectID int64, id types.Int64, name string) (*convex.PlatformDeployKeyResponse, error) {
-	keys, err := r.listPreviewDeployKeys(ctx, projectID)
-
-	if err != nil {
-		return nil, err
+// lister binds listPreviewDeployKeys to one project for the shared lookups.
+func (r *previewDeployKeyResource) lister(projectID int64) deployKeyLister {
+	return func(ctx context.Context) ([]convex.PlatformDeployKeyResponse, error) {
+		return r.listPreviewDeployKeys(ctx, projectID)
 	}
-
-	return resolveDeployKey(keys, id, name)
-}
-
-// findCreatedPreviewDeployKey lists the keys again after a create and picks
-// out the one that call made.
-func (r *previewDeployKeyResource) findCreatedPreviewDeployKey(ctx context.Context, projectID int64, name string, before []convex.PlatformDeployKeyResponse) (*convex.PlatformDeployKeyResponse, error) {
-	after, err := r.listPreviewDeployKeys(ctx, projectID)
-
-	if err != nil {
-		return nil, err
-	}
-
-	return selectCreatedDeployKey(before, after, name)
 }
 
 // applyPreviewDeployKey copies list metadata onto the model, leaving the secret
