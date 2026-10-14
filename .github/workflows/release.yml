@@ -14,10 +14,13 @@ jobs:
   goreleaser:
     runs-on: ubuntu-latest
     env:
-      # A repository without the signing secret (a fork) releases unsigned. The
-      # OpenTofu Registry accepts that while it holds no key for the provider;
-      # the Terraform Registry does not.
-      SIGNED: ${{ secrets.GPG_PRIVATE_KEY != '' }}
+      # Releases are signed unless the repository opts out explicitly by
+      # setting the variable RELEASE_UNSIGNED to "true" (a fork with no signing
+      # key). The OpenTofu Registry accepts unsigned releases while it holds no
+      # key for the provider; the Terraform Registry does not. Without the
+      # opt-out a missing GPG_PRIVATE_KEY fails the import step, as it always
+      # did, rather than quietly publishing an unsigned release.
+      SIGNED: ${{ vars.RELEASE_UNSIGNED != 'true' }}
     steps:
       - uses: actions/checkout@v7
 
