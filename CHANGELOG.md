@@ -8,7 +8,17 @@ Grouped as Added / Changed / Fixed / Removed, following
 [semantic versioning](https://semver.org/spec/v2.0.0.html), with the usual 0.x
 caveat that minor releases may still break.
 
-## Unreleased (0.2.1)
+## Unreleased
+
+### Added
+
+- `unique_name` on `convex_deploy_key` and `convex_preview_deploy_key`: the
+  key's full name as Convex lists it.
+- Import accepts either the short name or the full listed name
+  (`'playful-otter-123/github-actions (<uuid>)'`). The full name is matched
+  exactly first, so a legacy unsuffixed key can be imported beside suffixed
+  siblings. `name` is recorded as the short name, so configurations using it
+  plan no replacement.
 
 ### Fixed
 
@@ -19,29 +29,26 @@ caveat that minor releases may still break.
   created deploy key", saved state with a null `id`, the next refresh dropped
   it as deleted, and each apply made one more key. Now:
   - Create lists the keys before and after the create call and takes the one
-    new key whose name matches. If that is not exactly one key, the secret is
-    still saved to state and the apply reports the error, as before.
+    new key whose name matches. Creates against one deployment or project are
+    serialised within the provider, so same-named keys created in parallel
+    each find their own. If the key still cannot be identified, the secret is
+    saved to state and the apply reports the error.
   - Read finds the key by its stable `id`. A key with no `id` in state (an
-    import, or state written by 0.2.0) is adopted by name when exactly one key
-    matches; several matches fail with their ids listed, so the extras can be
-    deleted or the right one imported by its full name.
-  - Delete uses the secret from state, or the key's full listed name when
-    there is no secret (an imported key).
+    import, or state written by 0.2.0) is adopted by `unique_name`, else by
+    name when exactly one key matches. If none or several match, a key whose
+    secret is in state is kept with a warning; one without a secret is
+    dropped when missing, and fails with the candidates' ids when ambiguous.
+  - Delete uses the key's full listed name, falling back to the secret only
+    for a key that cannot be found in the list. A deployment or project that
+    no longer exists counts as already deleted.
+  - Listing keys is retried on transient failures.
   - `name` keeps the configured value, so there is no perpetual diff. A listed
     name matches the configured one when it is equal or is
-    `<configured> (<suffix>)`; `ci` does not match `ci-other (...)`.
+    `<configured> (<uuid>)`; `ci` matches neither `ci-other (<uuid>)` nor
+    `ci (old)`.
 
   Keys orphaned by 0.2.0 still exist in Convex and are not deleted by this
-  fix. If several keys match a resource's name, its refresh reports them;
-  delete the extras in the dashboard.
-
-### Added
-
-- `unique_name` on `convex_deploy_key` and `convex_preview_deploy_key`: the
-  key's full name as Convex lists it.
-- Import accepts either the short name or the full listed name
-  (`'playful-otter-123/github-actions (<uuid>)'`). A full name is recorded as
-  the short one, so configurations using the short name plan no replacement.
+  fix; delete the extras in the dashboard.
 
 ## 0.2.0 (2026-08-03)
 
