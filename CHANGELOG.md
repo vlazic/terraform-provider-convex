@@ -8,7 +8,7 @@ Grouped as Added / Changed / Fixed / Removed, following
 [semantic versioning](https://semver.org/spec/v2.0.0.html), with the usual 0.x
 caveat that minor releases may still break.
 
-## Unreleased
+## 0.3.0 (2026-10-14)
 
 ### Added
 
