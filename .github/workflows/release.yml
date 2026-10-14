@@ -13,6 +13,11 @@ permissions:
 jobs:
   goreleaser:
     runs-on: ubuntu-latest
+    env:
+      # A repository without the signing secret (a fork) releases unsigned. The
+      # OpenTofu Registry accepts that while it holds no key for the provider;
+      # the Terraform Registry does not.
+      SIGNED: ${{ secrets.GPG_PRIVATE_KEY != '' }}
     steps:
       - uses: actions/checkout@v7
 
@@ -24,6 +29,7 @@ jobs:
       # Imports the signing key and starts an agent, so GoReleaser can sign
       # non-interactively.
       - id: import_gpg
+        if: env.SIGNED == 'true'
         uses: crazy-max/ghaction-import-gpg@v7
         with:
           gpg_private_key: ${{ secrets.GPG_PRIVATE_KEY }}
@@ -32,7 +38,7 @@ jobs:
       - uses: goreleaser/goreleaser-action@v7
         with:
           version: "~> v2"
-          args: release --clean
+          args: release --clean ${{ env.SIGNED != 'true' && '--skip=sign' || '' }}
         env:
           GPG_FINGERPRINT: ${{ steps.import_gpg.outputs.fingerprint }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
